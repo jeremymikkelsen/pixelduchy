@@ -231,7 +231,7 @@ function drawRock(
 }
 
 // ─── Biome drawers ────────────────────────────────────────────────────────────
-function drawOcean(ctx: CanvasRenderingContext2D, size: number, rng: () => number, season: number) {
+function drawOcean(ctx: CanvasRenderingContext2D, size: number, rng: () => number, season: number, _layoutRng: () => number) {
   // Winter: dark stormy; Fall: slightly darker; Spring/Summer: bright blue
   const [c0, c1] = season === 3
     ? ['#0e2a58', '#163478']
@@ -271,7 +271,7 @@ function drawOcean(ctx: CanvasRenderingContext2D, size: number, rng: () => numbe
   }
 }
 
-function drawCoast(ctx: CanvasRenderingContext2D, size: number, rng: () => number, season: number) {
+function drawCoast(ctx: CanvasRenderingContext2D, size: number, rng: () => number, season: number, _layoutRng: () => number) {
   // Winter: greyish sand; otherwise warm sand
   const base = season === 3 ? '#a89878' : '#c8a460';
   ctx.fillStyle = base;
@@ -298,7 +298,7 @@ function drawCoast(ctx: CanvasRenderingContext2D, size: number, rng: () => numbe
   }
 }
 
-function drawPlains(ctx: CanvasRenderingContext2D, size: number, rng: () => number, season: number) {
+function drawPlains(ctx: CanvasRenderingContext2D, size: number, rng: () => number, season: number, _layoutRng: () => number) {
   const bases = ['#5a9a30', '#4a8820', '#8a7820', '#585f54'];
   ctx.fillStyle = bases[season];
   ctx.fillRect(0, 0, size, size);
@@ -349,12 +349,12 @@ function drawPlains(ctx: CanvasRenderingContext2D, size: number, rng: () => numb
   if (rng() < 0.25) drawRock(ctx, 8 + rng() * (size - 16), 8 + rng() * (size - 16), 3 + rng() * 4, rng);
 }
 
-function drawForest(ctx: CanvasRenderingContext2D, size: number, rng: () => number, season: number) {
+function drawForest(ctx: CanvasRenderingContext2D, size: number, rng: () => number, season: number, layoutRng: () => number) {
   const floors = ['#2a4a1a', '#1e3a14', '#3a2a10', '#2a2a22'];
   ctx.fillStyle = floors[season];
   ctx.fillRect(0, 0, size, size);
 
-  // Floor texture
+  // Floor texture — uses rng (season-dependent visuals, not layout)
   const floorPatch = season === 2
     ? `rgba(140,90,20,%.2f)`  // fall: earthy brown
     : season === 3
@@ -365,7 +365,7 @@ function drawForest(ctx: CanvasRenderingContext2D, size: number, rng: () => numb
     radialPatch(ctx, rng() * size, rng() * size, 4 + rng() * 10, floorPatch.replace('%.2f', a));
   }
 
-  // Winter ground snow
+  // Winter ground snow — uses rng, season-specific, does NOT affect layoutRng
   if (season === 3) {
     for (let i = 0; i < 5; i++) {
       radialPatch(ctx, rng() * size, rng() * size, 4 + rng() * 10,
@@ -373,32 +373,35 @@ function drawForest(ctx: CanvasRenderingContext2D, size: number, rng: () => numb
     }
   }
 
-  // Trees
-  const treeCount = 2 + Math.floor(rng() * 2);
+  // Trees — layoutRng drives all spatial decisions so positions/types are
+  // identical across every season. Each tree consumes exactly 5 layoutRng calls
+  // regardless of its type, keeping subsequent trees stable too.
+  const treeCount = 2 + Math.floor(layoutRng() * 2);
   const palettes = SEASON_PALETTES[season];
+  // Fallback palette for when palettes is empty (winter broadleaf — never rendered)
+  const fallbackPalette = SUMMER_PALETTES;
 
   for (let i = 0; i < treeCount; i++) {
-    const tx = size * (0.18 + rng() * 0.64);
-    const ty = size * (0.18 + rng() * 0.64);
+    const tx        = size * (0.18 + layoutRng() * 0.64); // call 1
+    const ty        = size * (0.18 + layoutRng() * 0.64); // call 2
+    const isConifer = layoutRng() < 0.3;                  // call 3
+    const palIdx    = Math.floor(layoutRng() * 4);         // call 4 (always consumed)
+    const treeSize  = 18 + layoutRng() * 11;               // call 5
 
-    if (season === 3) {
-      // Winter: bare trees + snow-capped conifers
-      if (rng() < 0.4) {
-        drawConifer(ctx, tx, ty, rng, true);
-      } else {
-        drawBareTree(ctx, tx, ty, rng);
-      }
-    } else if (rng() < 0.3) {
-      // Conifers keep their teal look in all seasons (evergreen)
-      drawConifer(ctx, tx, ty, rng, false);
+    if (isConifer) {
+      // Conifers are evergreen; show snow cap only in winter
+      drawConifer(ctx, tx, ty, rng, season === 3);
+    } else if (season === 3) {
+      // Deciduous trees go bare in winter
+      drawBareTree(ctx, tx, ty, rng);
     } else {
-      const palette = palettes[Math.floor(rng() * palettes.length)];
-      drawBroadleafTree(ctx, tx, ty, 18 + rng() * 11, palette, rng);
+      const pal = palettes.length > 0 ? palettes[palIdx % palettes.length] : fallbackPalette[palIdx % fallbackPalette.length];
+      drawBroadleafTree(ctx, tx, ty, treeSize, pal, rng);
     }
   }
 }
 
-function drawMountain(ctx: CanvasRenderingContext2D, size: number, rng: () => number, season: number) {
+function drawMountain(ctx: CanvasRenderingContext2D, size: number, rng: () => number, season: number, _layoutRng: () => number) {
   // Winter: lighter grey-white base; Summer: bare rocky
   const base = season === 3 ? '#909090' : '#7a7060';
   ctx.fillStyle = base;
@@ -440,7 +443,7 @@ function drawMountain(ctx: CanvasRenderingContext2D, size: number, rng: () => nu
   }
 }
 
-function drawWetland(ctx: CanvasRenderingContext2D, size: number, rng: () => number, season: number) {
+function drawWetland(ctx: CanvasRenderingContext2D, size: number, rng: () => number, season: number, _layoutRng: () => number) {
   const bases = ['#3a6040', '#3a5838', '#4a3820', '#404848'];
   ctx.fillStyle = bases[season];
   ctx.fillRect(0, 0, size, size);
@@ -502,7 +505,7 @@ function drawWetland(ctx: CanvasRenderingContext2D, size: number, rng: () => num
   }
 }
 
-function drawDesert(ctx: CanvasRenderingContext2D, size: number, rng: () => number, season: number) {
+function drawDesert(ctx: CanvasRenderingContext2D, size: number, rng: () => number, season: number, _layoutRng: () => number) {
   // Winter: slightly cooler sand
   const base = season === 3 ? '#b89060' : '#d4a040';
   ctx.fillStyle = base;
@@ -547,7 +550,9 @@ function drawDesert(ctx: CanvasRenderingContext2D, size: number, rng: () => numb
 }
 
 // ─── Main export ──────────────────────────────────────────────────────────────
-type DrawFn = (ctx: CanvasRenderingContext2D, size: number, rng: () => number, season: number) => void;
+// layoutRng is a season-independent RNG used for stable spatial layout (tree
+// positions, counts, types) so that seasonal changes never relocate decorations.
+type DrawFn = (ctx: CanvasRenderingContext2D, size: number, rng: () => number, season: number, layoutRng: () => number) => void;
 
 const BIOME_DRAWERS: Record<TileType, DrawFn> = {
   ocean:    drawOcean,
@@ -573,8 +578,12 @@ export function generateAllSeasonVariants(tileSize: number): Map<string, HTMLCan
         canvas.width = tileSize;
         canvas.height = tileSize;
         const ctx = canvas.getContext('2d')!;
+        // rng: season-independent seed for decorative details (visual variation)
         const rng = mulberry32(typeSeed * 137 + v * 1009);
-        drawFn(ctx, tileSize, rng, season);
+        // layoutRng: same base seed but different multiplier — used exclusively for
+        // spatial layout (tree positions, counts, types) so seasons don't move trees.
+        const layoutRng = mulberry32(typeSeed * 2971 + v * 6737);
+        drawFn(ctx, tileSize, rng, season, layoutRng);
         result.set(`${type}-s${season}-v${v}`, canvas);
       }
     }

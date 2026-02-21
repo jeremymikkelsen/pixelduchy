@@ -1,34 +1,19 @@
-import { useState } from 'react';
 import { usePhaser } from './hooks/usePhaser';
 import { useGameStore } from './store/gameStore';
 import { MainMenu } from './components/menus/MainMenu';
 import { GameHUD } from './components/hud/GameHUD';
 import { TilePanel } from './components/panels/TilePanel';
-import { createGame } from './lib/supabase/queries';
+import { KingDemandModal } from './components/panels/KingDemandModal';
+import { GameResultOverlay } from './components/overlays/GameResultOverlay';
 import './App.css';
 
 export default function App() {
-  const [inGame, setInGame] = useState(false);
-  const { setSession } = useGameStore();
+  const { session, initLocalGame } = useGameStore();
 
-  // Initialize Phaser once we're in-game
+  // Phaser runs at all times (map visible behind the main menu)
   usePhaser();
 
-  async function handleCreateGame() {
-    try {
-      const newSession = await createGame('local-dev');
-      setSession(newSession);
-      setInGame(true);
-    } catch {
-      // No Supabase configured yet — run locally
-      setInGame(true);
-    }
-  }
-
-  function handleJoinGame(_gameId: string) {
-    // TODO: fetch session and join
-    setInGame(true);
-  }
+  const inGame = session !== null;
 
   return (
     <div id="app">
@@ -36,11 +21,16 @@ export default function App() {
       <div id="phaser-container" />
 
       {!inGame ? (
-        <MainMenu onCreateGame={handleCreateGame} onJoinGame={handleJoinGame} />
+        <MainMenu
+          onCreateGame={initLocalGame}
+          onJoinGame={initLocalGame}
+        />
       ) : (
         <>
           <GameHUD />
           <TilePanel />
+          <KingDemandModal />
+          <GameResultOverlay />
         </>
       )}
     </div>

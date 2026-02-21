@@ -17,19 +17,30 @@ html, body, #root {
   position: relative;
   width: 100vw;
   height: 100vh;
+  /* Prevent browser text/element selection flash when click-dragging the map */
+  user-select: none;
+  -webkit-user-select: none;
 }
 
-/* Phaser canvas fills the screen */
+/* Phaser canvas fills the screen.
+   pointer-events: none on the container lets React UI elements above it
+   receive clicks; the canvas itself keeps pointer-events: auto so Phaser's
+   own canvas-level listeners still fire. */
 #phaser-container {
   position: absolute;
   inset: 0;
   z-index: 0;
+  pointer-events: none;
 }
 
 #phaser-container canvas {
   display: block;
   width: 100% !important;
   height: 100% !important;
+  pointer-events: auto;
+  /* Disable browser text-selection highlight on drag */
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 /* ─── HUD bar ─────────────────────────────────────────────────────────────────── */

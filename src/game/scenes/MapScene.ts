@@ -35,7 +35,7 @@ export class MapScene extends Phaser.Scene {
     this.world = existingSession?.map ?? generateWorld({ width: 64, height: 64, seed: Date.now() });
 
     this.tileGroup = this.add.group();
-    this.territoryOverlay = this.add.graphics();
+    this.territoryOverlay = this.add.graphics().setDepth(1);
 
     this.renderMap();
     this.setupCamera();
@@ -129,7 +129,7 @@ export class MapScene extends Phaser.Scene {
         building.tileY * TILE_SIZE + TILE_SIZE / 2,
         BUILDING_LABELS[building.type],
         { fontSize: '8px', color: '#ffffff', backgroundColor: '#000000bb', padding: { x: 2, y: 1 } },
-      ).setOrigin(0.5);
+      ).setOrigin(0.5).setDepth(2);
       this.buildingLabels.push(label);
     }
   }

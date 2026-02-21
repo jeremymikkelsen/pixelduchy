@@ -3,9 +3,8 @@ import { generateWorld } from '../procgen/worldgen';
 import { useUIStore } from '../../store/uiStore';
 import { useGameStore } from '../../store/gameStore';
 import { BUILDING_LABELS } from '../systems/turnEngine';
+import { TILE_SIZE, NUM_TILE_VARIANTS } from '../procgen/tileRenderer';
 import type { WorldMap, Tile, Duchy } from '../../types';
-
-const TILE_SIZE = 32;
 
 /**
  * MapScene - renders the game world tilemap and handles camera/input.
@@ -78,8 +77,10 @@ export class MapScene extends Phaser.Scene {
         const px = x * TILE_SIZE;
         const py = y * TILE_SIZE;
 
+        // Pick a stable variant based on tile position
+        const variant = Math.abs(x * 7 + y * 13) % NUM_TILE_VARIANTS;
         const img = this.add
-          .image(px, py, tile.type)
+          .image(px, py, `${tile.type}-v${variant}`)
           .setOrigin(0, 0)
           .setInteractive();
 
@@ -128,7 +129,7 @@ export class MapScene extends Phaser.Scene {
         building.tileX * TILE_SIZE + TILE_SIZE / 2,
         building.tileY * TILE_SIZE + TILE_SIZE / 2,
         BUILDING_LABELS[building.type],
-        { fontSize: '8px', color: '#ffffff', backgroundColor: '#000000bb', padding: { x: 2, y: 1 } },
+        { fontSize: '10px', color: '#ffffff', backgroundColor: '#000000bb', padding: { x: 2, y: 1 } },
       ).setOrigin(0.5).setDepth(2);
       this.buildingLabels.push(label);
     }

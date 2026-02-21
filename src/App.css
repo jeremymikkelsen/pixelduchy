@@ -8,6 +8,8 @@ html, body, #root {
   background: #0d1b2a;
   font-family: 'Segoe UI', system-ui, sans-serif;
   color: #e8dcc8;
+  /* override Vite default body { display: flex; place-items: center } */
+  display: block;
 }
 
 /* ─── App layout ─────────────────────────────────────────────────────────────── */

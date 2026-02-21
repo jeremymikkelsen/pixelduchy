@@ -99,16 +99,27 @@ export class MapScene extends Phaser.Scene {
     this.buildingLabels = [];
     if (!duchy) return;
 
-    // Subtle fill on owned tiles
-    this.territoryOverlay.fillStyle(0xf5d87a, 0.18);
+    const ownedSet = new Set(duchy.tiles.map(({ x, y }) => `${x},${y}`));
+
+    // Subtle red tint on owned tiles
+    this.territoryOverlay.fillStyle(0xff2020, 0.12);
     for (const { x, y } of duchy.tiles) {
       this.territoryOverlay.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
     }
 
-    // Gold border on owned tiles
-    this.territoryOverlay.lineStyle(2, 0xf5d87a, 0.75);
+    // Bright red border drawn only on exposed outer edges of the territory
+    this.territoryOverlay.lineStyle(3, 0xff2020, 1.0);
     for (const { x, y } of duchy.tiles) {
-      this.territoryOverlay.strokeRect(x * TILE_SIZE + 1, y * TILE_SIZE + 1, TILE_SIZE - 2, TILE_SIZE - 2);
+      const px = x * TILE_SIZE;
+      const py = y * TILE_SIZE;
+      if (!ownedSet.has(`${x},${y - 1}`))
+        this.territoryOverlay.lineBetween(px, py, px + TILE_SIZE, py);
+      if (!ownedSet.has(`${x},${y + 1}`))
+        this.territoryOverlay.lineBetween(px, py + TILE_SIZE, px + TILE_SIZE, py + TILE_SIZE);
+      if (!ownedSet.has(`${x - 1},${y}`))
+        this.territoryOverlay.lineBetween(px, py, px, py + TILE_SIZE);
+      if (!ownedSet.has(`${x + 1},${y}`))
+        this.territoryOverlay.lineBetween(px + TILE_SIZE, py, px + TILE_SIZE, py + TILE_SIZE);
     }
 
     // Building labels

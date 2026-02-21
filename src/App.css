@@ -1,0 +1,173 @@
+/* ─── Reset ─────────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #0d1b2a;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  color: #e8dcc8;
+}
+
+/* ─── App layout ─────────────────────────────────────────────────────────────── */
+#app {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+}
+
+/* Phaser canvas fills the screen */
+#phaser-container {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+#phaser-container canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* ─── HUD bar ─────────────────────────────────────────────────────────────────── */
+.hud-bar {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 1rem;
+  background: rgba(13, 27, 42, 0.88);
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  font-size: 0.85rem;
+}
+
+.hud-duchy-name {
+  font-weight: 700;
+  font-size: 1rem;
+  color: #f5d87a;
+  min-width: 120px;
+}
+
+.hud-resources {
+  display: flex;
+  gap: 0.75rem;
+  flex: 1;
+}
+
+.hud-resources span {
+  background: rgba(255,255,255,0.05);
+  border-radius: 4px;
+  padding: 2px 8px;
+}
+
+.hud-favor { color: #c9a227; }
+.hud-turn  { margin-left: auto; color: #8ab; }
+
+.hud-panels {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.hud-panels button {
+  padding: 4px 10px;
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 4px;
+  background: rgba(255,255,255,0.07);
+  color: #e8dcc8;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.hud-panels button:hover {
+  background: rgba(255,255,255,0.14);
+}
+
+/* ─── Panels ──────────────────────────────────────────────────────────────────── */
+.panel {
+  position: absolute;
+  z-index: 20;
+  background: rgba(13, 27, 42, 0.95);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 8px;
+  padding: 1rem;
+  min-width: 220px;
+}
+
+.tile-panel {
+  bottom: 1rem;
+  right: 1rem;
+}
+
+.panel-close {
+  position: absolute;
+  top: 0.5rem; right: 0.5rem;
+  background: none;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  font-size: 1rem;
+}
+
+.panel h3 {
+  margin-bottom: 0.5rem;
+  color: #f5d87a;
+  font-size: 0.95rem;
+}
+
+.panel p {
+  font-size: 0.8rem;
+  color: #aaa;
+  margin-top: 0.25rem;
+}
+
+/* ─── Main menu ───────────────────────────────────────────────────────────────── */
+.main-menu {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 18, 30, 0.92);
+  gap: 1rem;
+}
+
+.game-title {
+  font-size: 3rem;
+  font-weight: 900;
+  color: #f5d87a;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.game-tagline {
+  font-size: 1rem;
+  color: #8ab;
+  margin-bottom: 1rem;
+}
+
+.menu-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 220px;
+}
+
+.btn-primary, .btn-secondary, .btn-ghost {
+  padding: 0.75rem 1.5rem;
+  border-radius: 6px;
+  font-size: 1rem;
+  cursor: pointer;
+  border: none;
+  transition: opacity 0.15s;
+}
+
+.btn-primary  { background: #c9a227; color: #0d1b2a; font-weight: 700; }
+.btn-secondary { background: rgba(255,255,255,0.1); color: #e8dcc8; border: 1px solid rgba(255,255,255,0.2); }
+.btn-ghost    { background: none; color: #667; border: 1px solid rgba(255,255,255,0.08); font-size: 0.85rem; }
+
+.btn-primary:hover, .btn-secondary:hover, .btn-ghost:hover { opacity: 0.8; }

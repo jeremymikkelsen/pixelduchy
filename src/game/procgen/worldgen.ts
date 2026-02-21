@@ -66,15 +66,47 @@ function classifyTile(elevation: number, moisture: number, distToEdge: number): 
 
 // ─── Resource placement ───────────────────────────────────────────────────────
 
-const tileResources: Record<TileType, ResourceType | null> = {
-  ocean: 'fish',
-  coast: 'fish',
-  plains: 'grain',
-  forest: 'timber',
+/**
+ * For most tile types there is one fixed resource. Forest tiles may yield
+ * either timber OR deer depending on RNG — this models the real trade-off
+ * between logging and hunting in the same land.
+ */
+const BASE_TILE_RESOURCE: Record<TileType, ResourceType | null> = {
+  ocean:    'fish',
+  coast:    'fish',
+  plains:   'grain',
+  forest:   'timber', // some forests get 'deer' instead (see below)
   mountain: 'ore',
-  wetland: 'cloth', // flax grows in wetlands
-  desert: 'spice',
+  wetland:  'cloth',
+  desert:   'spice',
 };
+
+/**
+ * Resolve the resource for a single tile. For forests, 30% of tiles with a
+ * resource will have deer instead of timber. Plains tiles have a 15% chance
+ * to produce apples (wild orchards) instead of grain.
+ */
+function resolveTileResource(type: TileType, rng: () => number): ResourceType | null {
+  const base = BASE_TILE_RESOURCE[type];
+  if (base === null) return null;
+  if (type === 'forest' && rng() < 0.30) return 'deer';
+  if (type === 'plains' && rng() < 0.15) return 'apples';
+  return base;
+}
+
+/**
+ * Wildlife capacity is only meaningful for tiles that yield deer or fish.
+ * Returns [capacity, currentPopulation] for the tile.
+ * capacity = max harvestable per season at full population
+ * current  = starts at full capacity
+ */
+function resolveWildlife(resource: ResourceType | null, yield_: number): [number, number] {
+  if (resource === 'deer' || resource === 'fish') {
+    const capacity = yield_;
+    return [capacity, capacity];
+  }
+  return [0, 0];
+}
 
 // ─── Main generator ───────────────────────────────────────────────────────────
 
@@ -82,14 +114,13 @@ export function generateWorld({ width, height, seed }: WorldGenOptions): WorldMa
   const rng = mulberry32(seed);
 
   const elevation = valueNoise(width, height, rng, 8);
-  const moisture = valueNoise(width, height, rng, 6);
+  const moisture  = valueNoise(width, height, rng, 6);
 
   const tiles: Tile[][] = [];
 
   for (let y = 0; y < height; y++) {
     tiles.push([]);
     for (let x = 0; x < width; x++) {
-      // Distance from edge creates island shape
       const nx = (2 * x) / width - 1;
       const ny = (2 * y) / height - 1;
       const distToEdge = 1 - Math.max(Math.abs(nx), Math.abs(ny));
@@ -97,8 +128,13 @@ export function generateWorld({ width, height, seed }: WorldGenOptions): WorldMa
       const e = elevation[y][x];
       const m = moisture[y][x];
       const type = classifyTile(e, m, distToEdge);
-      const resource = tileResources[type];
+
+      const resource    = resolveTileResource(type, rng);
       const hasResource = resource !== null && rng() < 0.35;
+      const yield_      = hasResource ? Math.round(1 + rng() * 4) : 0;
+      const [wildlifeCapacity, wildlifeCurrent] = hasResource
+        ? resolveWildlife(resource, yield_)
+        : [0, 0];
 
       tiles[y].push({
         x,
@@ -106,8 +142,10 @@ export function generateWorld({ width, height, seed }: WorldGenOptions): WorldMa
         type,
         elevation: e,
         resource: hasResource ? resource : null,
-        resourceYield: hasResource ? Math.round(1 + rng() * 4) : 0,
+        resourceYield: yield_,
         duchyId: null,
+        wildlifeCapacity,
+        wildlifeCurrent,
       });
     }
   }

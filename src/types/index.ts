@@ -168,11 +168,19 @@ export interface GameStore {
   allDuchies: Duchy[];
   players: Player[];
   events: GameEvent[];
+  gameOver: boolean;
+  victory: boolean;
   setSession: (session: GameSession) => void;
   setMyDuchy: (duchy: Duchy) => void;
   setAllDuchies: (duchies: Duchy[]) => void;
   setPlayers: (players: Player[]) => void;
   addEvent: (event: GameEvent) => void;
+  initLocalGame: () => void;
+  endTurn: () => void;
+  placeBuilding: (type: BuildingType, x: number, y: number) => boolean;
+  fulfillDemand: () => void;
+  refuseDemand: () => void;
+  restartGame: () => void;
 }
 
 export interface UIStore {

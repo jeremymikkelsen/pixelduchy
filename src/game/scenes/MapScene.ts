@@ -1,7 +1,9 @@
 import Phaser from 'phaser';
 import { generateWorld } from '../procgen/worldgen';
 import { useUIStore } from '../../store/uiStore';
-import type { WorldMap, Tile } from '../../types';
+import { useGameStore } from '../../store/gameStore';
+import { BUILDING_LABELS } from '../systems/turnEngine';
+import type { WorldMap, Tile, Duchy } from '../../types';
 
 const TILE_SIZE = 32;
 
@@ -11,18 +13,29 @@ const TILE_SIZE = 32;
 export class MapScene extends Phaser.Scene {
   private world!: WorldMap;
   private tileGroup!: Phaser.GameObjects.Group;
+  private territoryOverlay!: Phaser.GameObjects.Graphics;
+  private buildingLabels: Phaser.GameObjects.Text[] = [];
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   private isDragging = false;
+  private dragMoved = false;
   private dragStartX = 0;
   private dragStartY = 0;
+  private dragScreenStartX = 0;
+  private dragScreenStartY = 0;
+  private unsubscribeStore?: () => void;
 
   constructor() {
     super({ key: 'MapScene' });
   }
 
   create() {
-    this.world = generateWorld({ width: 64, height: 64, seed: Date.now() });
+    // If a game session already exists in the store, use its map.
+    // Otherwise generate a preview world shown behind the main menu.
+    const existingSession = useGameStore.getState().session;
+    this.world = existingSession?.map ?? generateWorld({ width: 64, height: 64, seed: Date.now() });
+
     this.tileGroup = this.add.group();
+    this.territoryOverlay = this.add.graphics();
 
     this.renderMap();
     this.setupCamera();
@@ -30,11 +43,35 @@ export class MapScene extends Phaser.Scene {
 
     // Launch UI scene on top
     this.scene.launch('UIScene');
+
+    // Subscribe to store — re-render map when session changes, overlays when duchy changes
+    this.unsubscribeStore = useGameStore.subscribe((state) => {
+      const newMap = state.session?.map;
+      if (newMap && newMap !== this.world) {
+        this.world = newMap;
+        this.tileGroup.clear(true, true);
+        this.renderMap();
+        // Scroll to show the player's territory
+        if (state.myDuchy?.tiles.length) {
+          const ts = state.myDuchy.tiles;
+          const cx = ts.reduce((s, t) => s + t.x, 0) / ts.length;
+          const cy = ts.reduce((s, t) => s + t.y, 0) / ts.length;
+          this.cameras.main.centerOn(cx * TILE_SIZE + TILE_SIZE / 2, cy * TILE_SIZE + TILE_SIZE / 2);
+        }
+      }
+      this.renderOverlays(state.myDuchy);
+    });
+
+    this.renderOverlays(useGameStore.getState().myDuchy);
+  }
+
+  shutdown() {
+    this.unsubscribeStore?.();
+    this.buildingLabels = [];
   }
 
   private renderMap() {
     const { tiles, width, height } = this.world;
-
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const tile: Tile = tiles[y][x];
@@ -47,6 +84,7 @@ export class MapScene extends Phaser.Scene {
           .setInteractive();
 
         img.on('pointerup', () => {
+          if (this.dragMoved) return;
           useUIStore.getState().setSelectedTile({ x, y });
         });
 
@@ -55,10 +93,39 @@ export class MapScene extends Phaser.Scene {
     }
   }
 
+  private renderOverlays(duchy: Duchy | null) {
+    this.territoryOverlay.clear();
+    this.buildingLabels.forEach(l => l.destroy());
+    this.buildingLabels = [];
+    if (!duchy) return;
+
+    // Subtle fill on owned tiles
+    this.territoryOverlay.fillStyle(0xf5d87a, 0.18);
+    for (const { x, y } of duchy.tiles) {
+      this.territoryOverlay.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+    }
+
+    // Gold border on owned tiles
+    this.territoryOverlay.lineStyle(2, 0xf5d87a, 0.75);
+    for (const { x, y } of duchy.tiles) {
+      this.territoryOverlay.strokeRect(x * TILE_SIZE + 1, y * TILE_SIZE + 1, TILE_SIZE - 2, TILE_SIZE - 2);
+    }
+
+    // Building labels
+    for (const building of duchy.buildings) {
+      const label = this.add.text(
+        building.tileX * TILE_SIZE + TILE_SIZE / 2,
+        building.tileY * TILE_SIZE + TILE_SIZE / 2,
+        BUILDING_LABELS[building.type],
+        { fontSize: '8px', color: '#ffffff', backgroundColor: '#000000bb', padding: { x: 2, y: 1 } },
+      ).setOrigin(0.5);
+      this.buildingLabels.push(label);
+    }
+  }
+
   private setupCamera() {
     const mapWidth = this.world.width * TILE_SIZE;
     const mapHeight = this.world.height * TILE_SIZE;
-
     this.cameras.main.setBounds(0, 0, mapWidth, mapHeight);
     this.cameras.main.setZoom(1);
     this.cameras.main.centerOn(mapWidth / 2, mapHeight / 2);
@@ -67,15 +134,20 @@ export class MapScene extends Phaser.Scene {
   private setupInput() {
     this.cursors = this.input.keyboard!.createCursorKeys();
 
-    // Drag to pan
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       this.isDragging = true;
+      this.dragMoved = false;
+      this.dragScreenStartX = p.x;
+      this.dragScreenStartY = p.y;
       this.dragStartX = p.x + this.cameras.main.scrollX;
       this.dragStartY = p.y + this.cameras.main.scrollY;
     });
 
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
       if (!this.isDragging) return;
+      if (Math.abs(p.x - this.dragScreenStartX) > 5 || Math.abs(p.y - this.dragScreenStartY) > 5) {
+        this.dragMoved = true;
+      }
       this.cameras.main.scrollX = this.dragStartX - p.x;
       this.cameras.main.scrollY = this.dragStartY - p.y;
     });
@@ -84,7 +156,6 @@ export class MapScene extends Phaser.Scene {
       this.isDragging = false;
     });
 
-    // Scroll to zoom
     this.input.on('wheel', (_p: any, _gos: any, _dx: any, dy: number) => {
       const zoom = this.cameras.main.zoom;
       const newZoom = Phaser.Math.Clamp(zoom - dy * 0.001, 0.3, 3);
@@ -94,9 +165,9 @@ export class MapScene extends Phaser.Scene {
 
   update() {
     const speed = 8 / this.cameras.main.zoom;
-    if (this.cursors.left.isDown) this.cameras.main.scrollX -= speed;
+    if (this.cursors.left.isDown)  this.cameras.main.scrollX -= speed;
     if (this.cursors.right.isDown) this.cameras.main.scrollX += speed;
-    if (this.cursors.up.isDown) this.cameras.main.scrollY -= speed;
-    if (this.cursors.down.isDown) this.cameras.main.scrollY += speed;
+    if (this.cursors.up.isDown)    this.cameras.main.scrollY -= speed;
+    if (this.cursors.down.isDown)  this.cameras.main.scrollY += speed;
   }
 }

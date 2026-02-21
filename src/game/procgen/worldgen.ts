@@ -1,4 +1,5 @@
 import type { WorldMap, Tile, TileType, ResourceType } from '../../types';
+import { generateRivers } from './rivergen';
 
 interface WorldGenOptions {
   width: number;
@@ -111,5 +112,7 @@ export function generateWorld({ width, height, seed }: WorldGenOptions): WorldMa
     }
   }
 
-  return { width, height, tiles, seed };
+  const rivers = generateRivers(tiles, width, height, rng);
+
+  return { width, height, tiles, seed, rivers };
 }

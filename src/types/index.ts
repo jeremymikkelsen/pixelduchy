@@ -51,11 +51,14 @@ export interface Tile {
   duchyId: string | null;
 }
 
+export type RiverPath = Array<{ x: number; y: number }>;
+
 export interface WorldMap {
   width: number;
   height: number;
   tiles: Tile[][];
   seed: number;
+  rivers?: RiverPath[]; // absent in older persisted sessions — treat as []
 }
 
 // ─── Game Entities ────────────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { GameStore, GameSession, Duchy, Player, GameEvent, BuildingType, DuchyBuilding } from '../types';
+import type { GameStore, GameSession, Duchy, Player, GameEvent, BuildingType, DuchyBuilding, DevelopmentMode } from '../types';
 import { generateWorld } from '../game/procgen/worldgen';
 import {
   harvestResources,
@@ -14,6 +14,8 @@ import {
 const STARTER_RESOURCES = {
   grain: 20, timber: 15, ore: 8,
   cloth: 5,  fish: 5,   spice: 0, gold: 10,
+  cattle: 0, deer: 0, apples: 0,
+  bread: 0, cheese: 0, smoked_meat: 0, pie: 0,
 };
 
 export const useGameStore = create<GameStore>((set, get) => ({
@@ -75,6 +77,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       color: '#f5d87a',
       tiles: claimed,
       resources: { ...STARTER_RESOURCES },
+      foodAges: { apples: 0, bread: 0, cheese: 0, smoked_meat: 0 },
       population: {
         total: 100, farmers: 60, artisans: 20,
         merchants: 15, soldiers: 5, happiness: 70,
@@ -168,6 +171,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
       myDuchy: { ...myDuchy, kingsFavor: newFavor },
       gameOver: newFavor <= 0,
     });
+  },
+
+  setDistributionMode: (mode: DevelopmentMode) => {
+    set((state) => ({
+      myDuchy: state.myDuchy ? { ...state.myDuchy, developmentMode: mode } : null,
+    }));
   },
 
   restartGame: () => {

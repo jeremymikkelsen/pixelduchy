@@ -3,6 +3,15 @@ import type { BuildingType, Duchy, KingDemand, ResourceType, Resources, WorldMap
 // ─── Building data ────────────────────────────────────────────────────────────
 
 export const BUILDING_COSTS: Record<BuildingType, Partial<Resources>> = {
+  // Food production
+  field:      { timber: 2 },
+  pasture:    { timber: 3 },
+  orchard:    { timber: 2 },
+  fishery:    { timber: 4 },
+  // Food processing
+  smokehouse: { timber: 3 },
+  kitchen:    { timber: 2, grain: 1 },
+  // Economic / existing
   mill:     { grain: 5, timber: 3 },
   mine:     { timber: 4 },
   sawmill:  { timber: 3, grain: 2 },
@@ -14,6 +23,15 @@ export const BUILDING_COSTS: Record<BuildingType, Partial<Resources>> = {
 };
 
 export const BUILDING_YIELDS: Record<BuildingType, Partial<Resources>> = {
+  // Food production
+  field:      { grain: 3 },
+  pasture:    { cattle: 2 },
+  orchard:    { apples: 2 },
+  fishery:    { fish: 3 },
+  // Food processing
+  smokehouse: { smoked_meat: 2 },
+  kitchen:    { bread: 2 },
+  // Economic / existing
   mill:     { grain: 4 },
   mine:     { ore: 4 },
   sawmill:  { timber: 4 },
@@ -26,17 +44,26 @@ export const BUILDING_YIELDS: Record<BuildingType, Partial<Resources>> = {
 
 /** Favor granted once on construction */
 export const BUILDING_FAVOR: Record<BuildingType, number> = {
+  field: 0, pasture: 0, orchard: 0, fishery: 0, smokehouse: 0, kitchen: 0,
   mill: 0, mine: 0, sawmill: 0, port: 0,
   barracks: 0, market: 0, church: 3, castle: 0,
 };
 
 /** Short code shown on the map tile */
 export const BUILDING_LABELS: Record<BuildingType, string> = {
+  field: 'FLD', pasture: 'PST', orchard: 'ORC', fishery: 'FSH',
+  smokehouse: 'SMK', kitchen: 'KTC',
   mill: 'MLI', mine: 'MNE', sawmill: 'SAW', port: 'PRT',
   barracks: 'BRK', market: 'MKT', church: 'CHR', castle: 'CST',
 };
 
 export const BUILDING_DESCRIPTIONS: Record<BuildingType, string> = {
+  field:      '+3 grain/turn',
+  pasture:    '+2 cattle/turn',
+  orchard:    '+2 apples/turn',
+  fishery:    '+3 fish/turn',
+  smokehouse: '+2 smoked meat/turn',
+  kitchen:    '+2 bread/turn',
   mill:     '+4 grain/turn',
   mine:     '+4 ore/turn',
   sawmill:  '+4 timber/turn',
@@ -98,12 +125,12 @@ export function generateKingDemand(turnNumber: number): KingDemand {
   const amount = 5 + Math.floor(turnNumber / 5) * 3;
   return {
     id: `demand-${turnNumber}`,
-    turnNumber,
+    issuedTurn: turnNumber,
+    deadlineTurn: turnNumber + 2,
     resourceType: resource,
     amount,
     favorReward: 10,
     favorPenalty: 20,
-    deadline: turnNumber,
   };
 }
 

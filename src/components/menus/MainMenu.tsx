@@ -11,6 +11,7 @@ export function MainMenu({ onCreateGame }: Props) {
     <div className="main-menu">
       <h1 className="game-title">Pixelduchy</h1>
       <p className="game-tagline">Rule your duchy. Please the king. Outlast your rivals.</p>
+      <p className="build-version">build #{__BUILD_NUMBER__}</p>
       <div className="menu-buttons">
         <button className="btn-primary" onClick={onCreateGame}>
           Create Game

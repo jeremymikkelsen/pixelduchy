@@ -1,3 +1,4 @@
+import Phaser from 'phaser';
 import type { BuildingType } from '../../types';
 
 type DrawFn = (ctx: CanvasRenderingContext2D, s: number) => void;
@@ -974,14 +975,16 @@ const BUILDING_DRAWERS: Record<BuildingType, DrawFn> = {
   castle:     drawCastle,
 };
 
-export function generateBuildingTextures(tileSize: number): Map<string, HTMLCanvasElement> {
-  const result = new Map<string, HTMLCanvasElement>();
+export function registerBuildingTextures(
+  textures: Phaser.Textures.TextureManager,
+  tileSize: number,
+): void {
   for (const [type, drawFn] of Object.entries(BUILDING_DRAWERS) as [BuildingType, DrawFn][]) {
-    const canvas = document.createElement('canvas');
-    canvas.width  = tileSize;
-    canvas.height = tileSize;
-    drawFn(canvas.getContext('2d')!, tileSize);
-    result.set(`building-${type}`, canvas);
+    const key = `building-${type}`;
+    if (textures.exists(key)) continue;
+    const tex = textures.createCanvas(key, tileSize, tileSize);
+    if (!tex) continue;
+    drawFn(tex.getContext(), tileSize);
+    tex.refresh();
   }
-  return result;
 }

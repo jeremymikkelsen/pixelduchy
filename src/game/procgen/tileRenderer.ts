@@ -1,6 +1,6 @@
 import type { TileType } from '../../types';
 
-export const TILE_SIZE = 64;
+export const TILE_SIZE = 128;
 export const NUM_TILE_VARIANTS = 8;
 export const SEASON_COUNT = 4; // 0=spring 1=summer 2=fall 3=winter
 

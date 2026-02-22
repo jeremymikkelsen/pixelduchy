@@ -2,7 +2,6 @@ import Phaser from 'phaser';
 import { generateWorld } from '../procgen/worldgen';
 import { useUIStore } from '../../store/uiStore';
 import { useGameStore } from '../../store/gameStore';
-import { BUILDING_LABELS } from '../systems/turnEngine';
 import { TILE_SIZE, NUM_TILE_VARIANTS, getSeasonIndex } from '../procgen/tileRenderer';
 import type { WorldMap, Tile, Duchy, TileType } from '../../types';
 
@@ -15,7 +14,7 @@ export class MapScene extends Phaser.Scene {
   private biomeTransitionLayer!: Phaser.GameObjects.Graphics;
   private territoryOverlay!: Phaser.GameObjects.Graphics;
   private riverGraphics!: Phaser.GameObjects.Graphics;
-  private buildingLabels: Phaser.GameObjects.Text[] = [];
+  private buildingSprites: Phaser.GameObjects.Image[] = [];
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   private isDragging = false;
   private dragMoved = false;
@@ -82,7 +81,7 @@ export class MapScene extends Phaser.Scene {
 
   shutdown() {
     this.unsubscribeStore?.();
-    this.buildingLabels = [];
+    this.buildingSprites = [];
   }
 
   // ─── Tile rendering ──────────────────────────────────────────────────────────
@@ -291,8 +290,8 @@ export class MapScene extends Phaser.Scene {
 
   private renderOverlays(duchy: Duchy | null) {
     this.territoryOverlay.clear();
-    this.buildingLabels.forEach(l => l.destroy());
-    this.buildingLabels = [];
+    this.buildingSprites.forEach(s => s.destroy());
+    this.buildingSprites = [];
     if (!duchy) return;
 
     const ownedSet = new Set(duchy.tiles.map(({ x, y }) => `${x},${y}`));
@@ -313,13 +312,12 @@ export class MapScene extends Phaser.Scene {
     }
 
     for (const building of duchy.buildings) {
-      const label = this.add.text(
-        building.tileX * TILE_SIZE + TILE_SIZE / 2,
-        building.tileY * TILE_SIZE + TILE_SIZE / 2,
-        BUILDING_LABELS[building.type],
-        { fontSize: '10px', color: '#ffffff', backgroundColor: '#000000bb', padding: { x: 2, y: 1 } },
-      ).setOrigin(0.5).setDepth(2);
-      this.buildingLabels.push(label);
+      const sprite = this.add.image(
+        building.tileX * TILE_SIZE,
+        building.tileY * TILE_SIZE,
+        `building-${building.type}`,
+      ).setOrigin(0, 0).setDepth(2);
+      this.buildingSprites.push(sprite);
     }
   }
 

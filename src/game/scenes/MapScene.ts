@@ -24,6 +24,7 @@ export class MapScene extends Phaser.Scene {
   private dragScreenStartY = 0;
   private unsubscribeStore?: () => void;
   private currentSeasonIndex = 0;
+  private vegetationLayer!: Phaser.GameObjects.Graphics;
 
   constructor() {
     super({ key: 'MapScene' });
@@ -35,14 +36,16 @@ export class MapScene extends Phaser.Scene {
     this.currentSeasonIndex = getSeasonIndex(existingSession?.turnNumber ?? 1);
 
     this.tileGroup = this.add.group();
-    // Depth order: tiles (0) → transitions (0.35) → rivers (0.5) → territory (1)
+    // Depth: tiles(0) → transitions(0.35) → rivers(0.5) → vegetation(0.55) → territory(1)
     this.biomeTransitionLayer = this.add.graphics().setDepth(0.35);
     this.riverGraphics = this.add.graphics().setDepth(0.5);
+    this.vegetationLayer = this.add.graphics().setDepth(0.55);
     this.territoryOverlay = this.add.graphics().setDepth(1);
 
     this.renderMap();
     this.renderBiomeTransitions();
     this.renderRivers();
+    this.renderVegetation();
     this.setupCamera();
     this.setupInput();
 
@@ -56,6 +59,7 @@ export class MapScene extends Phaser.Scene {
         this.renderMap();
         this.renderBiomeTransitions();
         this.renderRivers();
+        this.renderVegetation();
         if (state.myDuchy?.tiles.length) {
           const ts = state.myDuchy.tiles;
           const cx = ts.reduce((s, t) => s + t.x, 0) / ts.length;
@@ -71,6 +75,7 @@ export class MapScene extends Phaser.Scene {
         this.currentSeasonIndex = newSeason;
         this.updateSeasonTextures();
         this.renderBiomeTransitions();
+        this.renderVegetation();
       }
 
       this.renderOverlays(state.allDuchies);
@@ -166,11 +171,11 @@ export class MapScene extends Phaser.Scene {
           const edgeCX = (x + 0.5 + dx * 0.5) * TS;
           const edgeCY = (y + 0.5 + dy * 0.5) * TS;
 
-          const count = 2 + Math.floor(rng() * 2);
+          const isForestEdge = tile.type === 'forest' || neighbor.type === 'forest';
+          const count = isForestEdge ? 4 + Math.floor(rng() * 3) : 2 + Math.floor(rng() * 2);
           for (let i = 0; i < count; i++) {
-            // Spread positions along the edge and a random depth inside the tile
-            const along = (rng() - 0.5) * (TS - 18);
-            const depth = 6 + rng() * 14;
+            const along = (rng() - 0.5) * (TS - 10);
+            const depth = isForestEdge ? 14 + rng() * 36 : 6 + rng() * 14;
             // Normal into tile = (-dx, -dy); perpendicular along edge = (-dy, dx)
             const px = edgeCX + (-dy) * along - dx * depth;
             const py = edgeCY + ( dx) * along - dy * depth;
@@ -285,6 +290,47 @@ export class MapScene extends Phaser.Scene {
       const last = river[river.length - 1];
       if (tiles[last.y]?.[last.x]?.type === 'ocean' || tiles[last.y]?.[last.x]?.type === 'coast') {
         drawRiverDelta(this.riverGraphics, smooth, MAX_W);
+      }
+    }
+  }
+
+  // ─── World-space vegetation ───────────────────────────────────────────────────
+
+  /** Draws large trees in world-space on all forest tiles so they cross tile
+   *  boundaries freely, eliminating the visible grid. Redrawn each season. */
+  private renderVegetation() {
+    this.vegetationLayer.clear();
+    const { tiles, width, height } = this.world;
+    const season = this.currentSeasonIndex;
+    const palettes = VEG_PALETTES[season];
+
+    for (let ty = 0; ty < height; ty++) {
+      for (let tx = 0; tx < width; tx++) {
+        if (tiles[ty][tx].type !== 'forest') continue;
+
+        // Position-stable layout seed — same tree positions every season
+        const layoutRng = makeRng((tx * 3571 + ty * 4297 + 13) >>> 0);
+        // Season-dependent visual seed — controls leaf colour, snow etc.
+        const visualRng  = makeRng((tx * 7919 + ty * 6271 + season * 1013) >>> 0);
+
+        const count = 3 + Math.floor(layoutRng() * 3); // 3–5 trees per tile
+        for (let i = 0; i < count; i++) {
+          // Allow ~8 % bleed beyond each tile edge so canopies cross boundaries
+          const wx = (tx + layoutRng() * 1.08 - 0.04) * TILE_SIZE;
+          const wy = (ty + layoutRng() * 1.08 - 0.04) * TILE_SIZE;
+          const isConifer = layoutRng() < 0.28;
+          const palIdx    = Math.floor(layoutRng() * 4);
+          const radius    = 26 + layoutRng() * 22; // 26–48 px
+
+          if (isConifer) {
+            vegConifer(this.vegetationLayer, wx, wy, visualRng, season === 3);
+          } else if (season === 3) {
+            vegBareTree(this.vegetationLayer, wx, wy, visualRng);
+          } else {
+            vegBroadleaf(this.vegetationLayer, wx, wy, radius,
+              palettes[palIdx % palettes.length], visualRng);
+          }
+        }
       }
     }
   }
@@ -557,6 +603,103 @@ function drawRiverDelta(
   }
 }
 
+// ─── World-space vegetation palettes & drawers (Phaser Graphics) ─────────────
+
+interface VegPalette { base: number; mid: number; hi: number; trunk: number; }
+
+const VEG_PALETTES: VegPalette[][] = [
+  // Spring — fresh greens + cherry blossom
+  [
+    { base: 0x2d6a2d, mid: 0x4a9440, hi: 0x7abf50, trunk: 0x5a3a1a },
+    { base: 0x3a7228, mid: 0x58a040, hi: 0x8ad458, trunk: 0x4a3218 },
+    { base: 0x2d6040, mid: 0x3e8a58, hi: 0x60b878, trunk: 0x3a2a18 },
+    { base: 0x7a3868, mid: 0xb05888, hi: 0xe090b8, trunk: 0x5a2a40 },
+  ],
+  // Summer — deep saturated greens
+  [
+    { base: 0x1a5a1a, mid: 0x2d8030, hi: 0x5aad40, trunk: 0x4a3218 },
+    { base: 0x245a18, mid: 0x388a28, hi: 0x60b040, trunk: 0x3e2814 },
+    { base: 0x2d6a2d, mid: 0x4a9440, hi: 0x7abf50, trunk: 0x5a3a1a },
+    { base: 0x1a6a3a, mid: 0x2d9058, hi: 0x50b878, trunk: 0x3a2a18 },
+  ],
+  // Fall — oranges, reds, golds
+  [
+    { base: 0x8a3a10, mid: 0xc05a20, hi: 0xe88030, trunk: 0x5a2e10 },
+    { base: 0x8a2010, mid: 0xb04020, hi: 0xd06030, trunk: 0x5a2010 },
+    { base: 0x8a7a10, mid: 0xc0a820, hi: 0xe8c830, trunk: 0x5a4a10 },
+    { base: 0x6a4a10, mid: 0x8a6a30, hi: 0xb08040, trunk: 0x4a3010 },
+  ],
+  // Winter — bare/conifer handled by type, but fallback palette if needed
+  [{ base: 0x2a3a1a, mid: 0x3a5a28, hi: 0x5a7a40, trunk: 0x4a3218 }],
+];
+
+function vegBroadleaf(
+  g: Phaser.GameObjects.Graphics,
+  cx: number, cy: number, radius: number,
+  p: VegPalette, rng: () => number,
+) {
+  g.fillStyle(0x000000, 0.20);
+  g.fillEllipse(cx + radius * 0.12, cy + radius * 0.18, radius * 2.0, radius * 1.2);
+  g.fillStyle(p.trunk, 0.92);
+  g.fillEllipse(cx, cy + radius * 0.28, radius * 0.48, radius * 0.30);
+  g.fillStyle(p.base, 1.0);
+  g.fillCircle(cx, cy, radius);
+  const blobs = 3 + Math.floor(rng() * 3);
+  for (let i = 0; i < blobs; i++) {
+    const ang = rng() * Math.PI * 2;
+    const d   = rng() * radius * 0.52;
+    const br  = radius * (0.28 + rng() * 0.34);
+    g.fillStyle(p.mid, 0.82);
+    g.fillCircle(cx + Math.cos(ang) * d, cy + Math.sin(ang) * d, br);
+  }
+  g.fillStyle(p.hi, 0.50);
+  g.fillCircle(cx - radius * 0.32, cy - radius * 0.34, radius * 0.50);
+  g.fillStyle(0x000000, 0.28);
+  g.fillCircle(cx + radius * 0.28, cy + radius * 0.30, radius * 0.44);
+}
+
+function vegConifer(
+  g: Phaser.GameObjects.Graphics,
+  cx: number, cy: number,
+  rng: () => number, snow: boolean,
+) {
+  const h = 52 + rng() * 26;
+  const w = h * 0.44;
+  g.fillStyle(0x000000, 0.18);
+  g.fillEllipse(cx + 4, cy + h * 0.42, w * 1.9, h * 0.38);
+  g.fillStyle(0x1a4a38, 1.0);
+  g.fillTriangle(cx, cy - h * 0.50, cx - w, cy + h * 0.42, cx + w, cy + h * 0.42);
+  g.fillStyle(0x2a6a50, 0.90);
+  g.fillTriangle(cx, cy - h * 0.48, cx - w * 0.70, cy + h * 0.26, cx + w * 0.70, cy + h * 0.26);
+  g.fillStyle(0x3e8860, 0.55);
+  g.fillTriangle(cx, cy - h * 0.46, cx - w * 0.36, cy, cx + w * 0.36, cy);
+  if (snow) {
+    g.fillStyle(0xe1eeff, 0.80);
+    g.fillTriangle(cx, cy - h * 0.50 + 2, cx - w * 0.50, cy - h * 0.14, cx + w * 0.50, cy - h * 0.14);
+  }
+}
+
+function vegBareTree(
+  g: Phaser.GameObjects.Graphics,
+  cx: number, cy: number,
+  rng: () => number,
+) {
+  const h  = 44 + rng() * 22;
+  const tw = 3.0 + rng() * 2.5;
+  g.fillStyle(0x000000, 0.14);
+  g.fillEllipse(cx + 2, cy + h * 0.46, tw * 3.5, tw * 1.6);
+  g.lineStyle(tw, 0x3a2a16, 0.90);
+  g.lineBetween(cx, cy + h * 0.46, cx, cy - h * 0.46);
+  const branches = 4 + Math.floor(rng() * 4);
+  for (let i = 0; i < branches; i++) {
+    const by   = cy - h * 0.46 + h * (0.20 + rng() * 0.72);
+    const bLen = 14 + rng() * 20;
+    const dir  = rng() > 0.5 ? 1 : -1;
+    g.lineStyle(1.2 + rng() * 1.4, 0x3a2a16, 0.72);
+    g.lineBetween(cx, by, cx + dir * bLen, by - 5 - rng() * 10);
+  }
+}
+
 // ─── Biome transition decoration helpers ─────────────────────────────────────
 
 function transitionTree(
@@ -564,42 +707,17 @@ function transitionTree(
   px: number, py: number,
   rng: () => number, season: number,
 ): void {
-  const h = 10 + rng() * 8;
-  const r =  5 + rng() * 4;
-
-  if (season === 3) {
-    if (rng() < 0.4) {
-      // Small snow-capped conifer
-      g.fillStyle(0x1a4a38, 0.90);
-      g.fillTriangle(px, py - h, px - r * 0.6, py, px + r * 0.6, py);
-      g.fillStyle(0x2a6a50, 0.70);
-      g.fillTriangle(px, py - h * 0.85, px - r * 0.4, py - h * 0.3, px + r * 0.4, py - h * 0.3);
-      g.fillStyle(0xe1eeff, 0.60);
-      g.fillTriangle(px, py - h, px - r * 0.35, py - h * 0.55, px + r * 0.35, py - h * 0.55);
-    } else {
-      // Bare tree
-      g.lineStyle(1.5, 0x3a2a16, 0.82);
-      g.beginPath(); g.moveTo(px, py); g.lineTo(px, py - h); g.strokePath();
-      g.lineStyle(1.0, 0x3a2a16, 0.65);
-      g.beginPath();
-      g.moveTo(px, py - h * 0.5); g.lineTo(px - r * 0.6, py - h * 0.78);
-      g.moveTo(px, py - h * 0.5); g.lineTo(px + r * 0.6, py - h * 0.78);
-      g.strokePath();
-    }
-    return;
+  const isConifer = rng() < 0.28;
+  const radius    = 20 + rng() * 18; // 20–38 px — properly sized for blending
+  if (isConifer) {
+    vegConifer(g, px, py, rng, season === 3);
+  } else if (season === 3) {
+    vegBareTree(g, px, py, rng);
+  } else {
+    const pals   = VEG_PALETTES[season];
+    const palIdx = Math.floor(rng() * 4) % pals.length;
+    vegBroadleaf(g, px, py, radius, pals[palIdx], rng);
   }
-
-  // Deciduous / mixed canopy for spring, summer, fall
-  const trunkCol = 0x5a3a1a;
-  g.fillStyle(trunkCol, 0.80);
-  g.fillRect(px - 1, py - h * 0.28, 2, h * 0.32);
-
-  const baseCol = season === 2 ? 0x8a3a10 : season === 0 ? 0x2d6a2d : 0x1a5a1a;
-  const midCol  = season === 2 ? 0xc05a20 : season === 0 ? 0x4a9440 : 0x2d8030;
-  g.fillStyle(baseCol, 0.85);
-  g.fillCircle(px, py - h * 0.28, r);
-  g.fillStyle(midCol, 0.52);
-  g.fillCircle(px - r * 0.25, py - h * 0.38, r * 0.62);
 }
 
 function transitionRock(

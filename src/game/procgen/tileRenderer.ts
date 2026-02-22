@@ -232,12 +232,12 @@ function drawRock(
 
 // ─── Biome drawers ────────────────────────────────────────────────────────────
 function drawOcean(ctx: CanvasRenderingContext2D, size: number, rng: () => number, season: number, _layoutRng: () => number) {
-  // Winter: dark stormy; Fall: slightly darker; Spring/Summer: bright blue
+  // Winter: dark blue-grey; Fall: deeper teal; Spring/Summer: turquoise
   const [c0, c1] = season === 3
-    ? ['#0e2a58', '#163478']
+    ? ['#0e3858', '#144468']
     : season === 2
-      ? ['#153c70', '#1a5088']
-      : ['#194a8a', '#2060aa'];
+      ? ['#156870', '#1a8080']
+      : ['#1a8888', '#22a8a0'];
 
   const bg = ctx.createLinearGradient(0, 0, size, size);
   bg.addColorStop(0, c0);
@@ -247,11 +247,11 @@ function drawOcean(ctx: CanvasRenderingContext2D, size: number, rng: () => numbe
 
   for (let i = 0; i < 8; i++) {
     radialPatch(ctx, rng() * size, rng() * size, 6 + rng() * 14,
-      `rgba(60,130,200,${(0.12 + rng() * 0.16).toFixed(2)})`);
+      `rgba(30,160,160,${(0.12 + rng() * 0.16).toFixed(2)})`);
   }
 
   const waveAlpha = season === 3 ? 0.5 : 0.35;
-  ctx.strokeStyle = `rgba(140,200,255,${waveAlpha})`;
+  ctx.strokeStyle = `rgba(160,230,230,${waveAlpha})`;
   ctx.lineWidth = season === 3 ? 1.5 : 1;
   for (let i = 0; i < 5; i++) {
     const wy = rng() * size;
@@ -264,7 +264,7 @@ function drawOcean(ctx: CanvasRenderingContext2D, size: number, rng: () => numbe
   }
 
   for (let i = 0; i < 7; i++) {
-    ctx.fillStyle = `rgba(180,230,255,${(0.15 + rng() * 0.3).toFixed(2)})`;
+    ctx.fillStyle = `rgba(200,245,245,${(0.15 + rng() * 0.3).toFixed(2)})`;
     ctx.beginPath();
     ctx.arc(rng() * size, rng() * size, 0.4 + rng() * 1.4, 0, Math.PI * 2);
     ctx.fill();
@@ -272,29 +272,29 @@ function drawOcean(ctx: CanvasRenderingContext2D, size: number, rng: () => numbe
 }
 
 function drawCoast(ctx: CanvasRenderingContext2D, size: number, rng: () => number, season: number, _layoutRng: () => number) {
-  // Winter: greyish sand; otherwise warm sand
-  const base = season === 3 ? '#a89878' : '#c8a460';
-  ctx.fillStyle = base;
+  // Shallow water — lighter/greener teal than deep ocean (beach overlay draws the sand)
+  const [c0, c1] = season === 3
+    ? ['#1a4868', '#206080']
+    : season === 2 ? ['#1e8890', '#28a8a0']
+    : ['#22a8a8', '#30c8b8'];
+  const bg = ctx.createLinearGradient(0, 0, size, size);
+  bg.addColorStop(0, c0);
+  bg.addColorStop(1, c1);
+  ctx.fillStyle = bg;
   ctx.fillRect(0, 0, size, size);
 
-  for (let i = 0; i < 18; i++) {
-    const light = rng() > 0.5;
-    const lightC = season === 3 ? 'rgba(190,178,158,0.35)' : `rgba(225,190,118,${(0.3 + rng() * 0.32).toFixed(2)})`;
-    const darkC  = season === 3 ? 'rgba(130,112,88,0.3)'  : `rgba(155,115,58,${(0.2 + rng() * 0.25).toFixed(2)})`;
-    radialPatch(ctx, rng() * size, rng() * size, 3 + rng() * 9, light ? lightC : darkC);
+  // Lighter ripple patches (more visible in shallows)
+  for (let i = 0; i < 7; i++) {
+    radialPatch(ctx, rng() * size, rng() * size, 5 + rng() * 12,
+      `rgba(80,200,200,${(0.15 + rng() * 0.20).toFixed(2)})`);
   }
 
-  const rockCount = 1 + Math.floor(rng() * 3);
-  for (let i = 0; i < rockCount; i++) {
-    drawRock(ctx, 8 + rng() * (size - 16), 8 + rng() * (size - 16), 4 + rng() * 6, rng);
-  }
-
-  if (season === 3) {
-    // Frost patches
-    for (let i = 0; i < 5; i++) {
-      radialPatch(ctx, rng() * size, rng() * size, 4 + rng() * 8,
-        `rgba(220,235,255,${(0.25 + rng() * 0.25).toFixed(2)})`);
-    }
+  // Sparkle dots
+  for (let i = 0; i < 5; i++) {
+    ctx.fillStyle = `rgba(200,245,245,${(0.20 + rng() * 0.30).toFixed(2)})`;
+    ctx.beginPath();
+    ctx.arc(rng() * size, rng() * size, 0.5 + rng() * 1.2, 0, Math.PI * 2);
+    ctx.fill();
   }
 }
 

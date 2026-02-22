@@ -25,6 +25,7 @@ export class MapScene extends Phaser.Scene {
   private unsubscribeStore?: () => void;
   private currentSeasonIndex = 0;
   private vegetationLayer!: Phaser.GameObjects.Graphics;
+  private beachLayer!: Phaser.GameObjects.Graphics;
 
   constructor() {
     super({ key: 'MapScene' });
@@ -36,14 +37,16 @@ export class MapScene extends Phaser.Scene {
     this.currentSeasonIndex = getSeasonIndex(existingSession?.turnNumber ?? 1);
 
     this.tileGroup = this.add.group();
-    // Depth: tiles(0) → transitions(0.35) → rivers(0.5) → vegetation(0.55) → territory(1)
+    // Depth: tiles(0) → transitions(0.35) → beach(0.42) → rivers(0.5) → vegetation(0.55) → territory(1)
     this.biomeTransitionLayer = this.add.graphics().setDepth(0.35);
+    this.beachLayer = this.add.graphics().setDepth(0.42);
     this.riverGraphics = this.add.graphics().setDepth(0.5);
     this.vegetationLayer = this.add.graphics().setDepth(0.55);
     this.territoryOverlay = this.add.graphics().setDepth(1);
 
     this.renderMap();
     this.renderBiomeTransitions();
+    this.renderBeach();
     this.renderRivers();
     this.renderVegetation();
     this.setupCamera();
@@ -58,6 +61,7 @@ export class MapScene extends Phaser.Scene {
         this.tileGroup.clear(true, true);
         this.renderMap();
         this.renderBiomeTransitions();
+        this.renderBeach();
         this.renderRivers();
         this.renderVegetation();
         if (state.myDuchy?.tiles.length) {
@@ -75,6 +79,7 @@ export class MapScene extends Phaser.Scene {
         this.currentSeasonIndex = newSeason;
         this.updateSeasonTextures();
         this.renderBiomeTransitions();
+        this.renderBeach();
         this.renderVegetation();
       }
 
@@ -151,7 +156,7 @@ export class MapScene extends Phaser.Scene {
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const tile = tiles[y][x];
-        if (tile.type === 'ocean') continue;
+        if (tile.type === 'ocean' || tile.type === 'coast') continue;
 
         const dirs = [
           { dx: 1, dy: 0 }, { dx: -1, dy: 0 },
@@ -162,7 +167,8 @@ export class MapScene extends Phaser.Scene {
           const nx = x + dx, ny = y + dy;
           if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
           const neighbor = tiles[ny][nx];
-          if (neighbor.type === tile.type) continue;
+          // Skip same-type, ocean, and coast (beach overlay handles coast boundaries)
+          if (neighbor.type === tile.type || neighbor.type === 'ocean' || neighbor.type === 'coast') continue;
 
           // Unique, reproducible seed per directed edge (tile → neighbor direction)
           const rng = makeRng(((x * 7919 + y * 6271 + (dx + 2) * 3581 + (dy + 2) * 4127) * 2053) >>> 0);
@@ -172,16 +178,13 @@ export class MapScene extends Phaser.Scene {
           const edgeCY = (y + 0.5 + dy * 0.5) * TS;
 
           const isForestEdge  = tile.type === 'forest'  || neighbor.type === 'forest';
-          const isOceanEdge   = neighbor.type === 'ocean';
           const isWetlandEdge = tile.type === 'wetland' || neighbor.type === 'wetland';
           const count = isForestEdge  ? 4 + Math.floor(rng() * 3)
-                      : isOceanEdge   ? 4 + Math.floor(rng() * 4)
                       : isWetlandEdge ? 3 + Math.floor(rng() * 3)
                       : 2 + Math.floor(rng() * 2);
           for (let i = 0; i < count; i++) {
             const along = (rng() - 0.5) * (TS - 10);
             const depth = isForestEdge  ? 14 + rng() * 36
-                        : isOceanEdge   ? 8  + rng() * 40
                         : isWetlandEdge ? 8  + rng() * 28
                         : 6 + rng() * 14;
             // Normal into tile = (-dx, -dy); perpendicular along edge = (-dy, dx)
@@ -201,11 +204,6 @@ export class MapScene extends Phaser.Scene {
     rng: () => number, season: number,
   ): void {
     const g = this.biomeTransitionLayer;
-    // Beach strip on any land tile bordering ocean
-    if (toType === 'ocean') {
-      transitionBeach(g, px, py, rng, season);
-      return;
-    }
     switch (fromType) {
       case 'forest':
         transitionTree(g, px, py, rng, season);
@@ -223,9 +221,6 @@ export class MapScene extends Phaser.Scene {
         break;
       case 'wetland':
         transitionWaterEdge(g, px, py, rng, season);
-        break;
-      case 'coast':
-        transitionPebble(g, px, py, rng, season);
         break;
       default:
         break;
@@ -377,6 +372,54 @@ export class MapScene extends Phaser.Scene {
               palettes[palIdx % palettes.length], visualRng);
           }
         }
+      }
+    }
+  }
+
+  // ─── Beach overlay ────────────────────────────────────────────────────────────
+
+  /** Draws organic beach strips on all coast tiles as a world-space overlay layer
+   *  (depth 0.42) so sand bleeds into adjacent land tiles. */
+  private renderBeach() {
+    this.beachLayer.clear();
+    const { tiles, width, height } = this.world;
+    const season = this.currentSeasonIndex;
+    const TS = TILE_SIZE;
+    const dirs4 = [
+      { dx: 1, dy: 0 }, { dx: -1, dy: 0 },
+      { dx: 0, dy: 1 }, { dx: 0, dy: -1 },
+    ] as const;
+
+    for (let ty = 0; ty < height; ty++) {
+      for (let tx = 0; tx < width; tx++) {
+        if (tiles[ty][tx].type !== 'coast') continue;
+
+        // Compute average "sea direction" (unit vector toward ocean/coast neighbors)
+        let seaX = 0, seaY = 0;
+        let hasMountainNeighbor = false;
+        for (const { dx, dy } of dirs4) {
+          const nx = tx + dx, ny = ty + dy;
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height) {
+            seaX += dx; seaY += dy; // treat map edge as ocean
+            continue;
+          }
+          const n = tiles[ny][nx];
+          if (n.type === 'ocean' || n.type === 'coast') { seaX += dx; seaY += dy; }
+          if (n.type === 'mountain') hasMountainNeighbor = true;
+        }
+        const seaLen = Math.sqrt(seaX * seaX + seaY * seaY);
+        if (seaLen < 0.1) continue; // fully surrounded — skip
+
+        const snx = seaX / seaLen, sny = seaY / seaLen; // normalized sea direction
+        const alongX = -sny, alongY = snx;               // perpendicular (along coast)
+        const cx = (tx + 0.5) * TS, cy = (ty + 0.5) * TS;
+
+        const layoutRng = makeRng((tx * 4969 + ty * 3491 + 7) >>> 0);
+        drawBeachStrip(
+          this.beachLayer, cx, cy,
+          snx, sny, alongX, alongY,
+          TS, layoutRng, season, hasMountainNeighbor,
+        );
       }
     }
   }
@@ -868,30 +911,6 @@ function transitionSparseGrass(
   }
 }
 
-function transitionBeach(
-  g: Phaser.GameObjects.Graphics,
-  px: number, py: number,
-  rng: () => number, season: number,
-): void {
-  const sandColor = season === 3 ? 0xb8a080 : 0xd4b464;
-  const r = 6 + rng() * 10;
-  // Shadow
-  g.fillStyle(0x000000, 0.08);
-  g.fillEllipse(px + 1.5, py + 1.5, r * 2.4, r * 1.4);
-  // Sand patch
-  g.fillStyle(sandColor, 0.70);
-  g.fillEllipse(px, py, r * 2.4, r * 1.4);
-  // Lighter highlight
-  g.fillStyle(season === 3 ? 0xd0c0a0 : 0xe8d090, 0.45);
-  g.fillEllipse(px - r * 0.25, py - r * 0.2, r * 1.3, r * 0.75);
-  // Occasional shell or pebble
-  if (rng() < 0.40) {
-    const col = rng() < 0.5 ? 0xf0e0c8 : 0x909888;
-    g.fillStyle(col, 0.65);
-    g.fillCircle(px + (rng() - 0.5) * r * 1.2, py + (rng() - 0.5) * r * 0.7, 1.0 + rng() * 1.8);
-  }
-}
-
 function transitionWaterEdge(
   g: Phaser.GameObjects.Graphics,
   px: number, py: number,
@@ -912,5 +931,165 @@ function transitionWaterEdge(
     g.fillStyle(season === 3 ? 0x506060 : 0x3a5830, 0.45);
     g.fillEllipse(px, py, r * 2.6, r * 1.3);
     transitionReed(g, px, py, rng, season);
+  }
+}
+
+// ─── Beach overlay helpers ────────────────────────────────────────────────────
+
+/** Rotation-aware ellipse approximated via fillPoints (14 vertices).
+ *  axisX/axisY is the major-axis unit vector; minor axis is (-axisY, axisX). */
+function drawRotatedEllipse(
+  g: Phaser.GameObjects.Graphics,
+  cx: number, cy: number,
+  rx: number, ry: number,
+  axisX: number, axisY: number,
+  color: number, alpha: number,
+): void {
+  const N = 14;
+  const pts: { x: number; y: number }[] = [];
+  for (let i = 0; i < N; i++) {
+    const a  = (i / N) * Math.PI * 2;
+    const lx = Math.cos(a) * rx;
+    const ly = Math.sin(a) * ry;
+    pts.push({
+      x: cx + lx * axisX - ly * axisY,
+      y: cy + lx * axisY + ly * axisX,
+    });
+  }
+  g.fillStyle(color, alpha);
+  g.fillPoints(pts, true);
+}
+
+/** Tall beach grass tufts — 3–6 wind-bent blades. */
+function drawDuneGrass(
+  g: Phaser.GameObjects.Graphics,
+  px: number, py: number,
+  rng: () => number, season: number,
+): void {
+  const col = season === 3 ? 0x909880 : season === 2 ? 0xa09828 : 0xb8b830;
+  const blades = 3 + Math.floor(rng() * 4);
+  for (let i = 0; i < blades; i++) {
+    const ox   = (rng() - 0.5) * 10;
+    const h    = 7 + rng() * 11;
+    const tilt = (rng() - 0.5) * 8;
+    g.lineStyle(1.0 + rng() * 0.8, col, 0.78);
+    g.beginPath();
+    g.moveTo(px + ox, py);
+    g.lineTo(px + ox + tilt, py - h);
+    g.strokePath();
+  }
+}
+
+/** Main beach renderer for a single coast tile.
+ *  seaX/seaY = unit vector toward ocean (normalised by caller).
+ *  Depth is measured from the ocean-facing edge of the tile inward. */
+function drawBeachStrip(
+  g: Phaser.GameObjects.Graphics,
+  cx: number, cy: number,
+  seaX: number, seaY: number,
+  alongX: number, alongY: number,
+  TS: number,
+  rng: () => number,
+  season: number,
+  rocky: boolean,
+): void {
+  if (rocky) {
+    drawRockyCoast(g, cx, cy, seaX, seaY, alongX, alongY, TS, rng);
+    return;
+  }
+
+  // Seasonal sand palette
+  const wetSand = season === 3 ? 0xb0a080 : season === 2 ? 0xb89838 : 0xc4a850;
+  const drySand = season === 3 ? 0xc8b888 : season === 2 ? 0xcbb858 : 0xdcc870;
+  const sandHi  = season === 3 ? 0xd8ccaa : 0xead890;
+
+  // Position helper: depth d from ocean-facing edge + along offset
+  const pt = (d: number, along: number) => ({
+    x: cx + seaX * 0.5 * TS - seaX * d + alongX * along,
+    y: cy + seaY * 0.5 * TS - seaY * d + alongY * along,
+  });
+
+  // 1. Foam / breaker line (thin, near ocean edge)
+  const foamN = 4 + Math.floor(rng() * 4);
+  for (let i = 0; i < foamN; i++) {
+    const { x, y } = pt(rng() * TS * 0.14, (rng() - 0.5) * TS * 0.95);
+    const rx = 28 + rng() * 24, ry = rx * (0.14 + rng() * 0.09);
+    drawRotatedEllipse(g, x, y, rx, ry, alongX, alongY, 0xf4f0e4, 0.58);
+  }
+
+  // 2. Wet sand (darker golden, near ocean)
+  const wetN = 7 + Math.floor(rng() * 5);
+  for (let i = 0; i < wetN; i++) {
+    const { x, y } = pt(TS * (0.06 + rng() * 0.52), (rng() - 0.5) * TS * 1.05);
+    const rx = 44 + rng() * 40, ry = rx * (0.20 + rng() * 0.12);
+    drawRotatedEllipse(g, x, y, rx, ry, alongX, alongY, wetSand, 0.72 + rng() * 0.12);
+  }
+
+  // 3. Dry sand (lighter, bleeds ~0.6 TS into adjacent land tile)
+  const dryN = 8 + Math.floor(rng() * 6);
+  for (let i = 0; i < dryN; i++) {
+    const { x, y } = pt(TS * (0.38 + rng() * 0.72), (rng() - 0.5) * TS * 1.10);
+    const rx = 50 + rng() * 46, ry = rx * (0.18 + rng() * 0.11);
+    drawRotatedEllipse(g, x, y, rx, ry, alongX, alongY, drySand, 0.74 + rng() * 0.12);
+  }
+
+  // 4. Sand highlight (sparse, mid-beach)
+  const hiN = 3 + Math.floor(rng() * 3);
+  for (let i = 0; i < hiN; i++) {
+    const { x, y } = pt(TS * (0.45 + rng() * 0.40), (rng() - 0.5) * TS * 0.80);
+    const rx = 28 + rng() * 24, ry = rx * (0.15 + rng() * 0.09);
+    drawRotatedEllipse(g, x, y, rx, ry, alongX, alongY, sandHi, 0.32);
+  }
+
+  // 5. Dune grass tufts (land side of coast tile, bleeding into land)
+  const grassN = 3 + Math.floor(rng() * 4);
+  for (let i = 0; i < grassN; i++) {
+    const { x, y } = pt(TS * (0.70 + rng() * 0.55), (rng() - 0.5) * TS * 0.95);
+    drawDuneGrass(g, x, y, rng, season);
+  }
+
+  // 6. Winter snow patches on upper beach
+  if (season === 3) {
+    const snowN = 2 + Math.floor(rng() * 3);
+    for (let i = 0; i < snowN; i++) {
+      const { x, y } = pt(TS * (0.55 + rng() * 0.50), (rng() - 0.5) * TS * 0.70);
+      const rx = 22 + rng() * 18, ry = rx * (0.17 + rng() * 0.10);
+      drawRotatedEllipse(g, x, y, rx, ry, alongX, alongY, 0xe4eef8, 0.50);
+    }
+  }
+}
+
+/** Rocky shoreline for mountain-adjacent coast tiles. */
+function drawRockyCoast(
+  g: Phaser.GameObjects.Graphics,
+  cx: number, cy: number,
+  seaX: number, seaY: number,
+  alongX: number, alongY: number,
+  TS: number,
+  rng: () => number,
+): void {
+  const count = 7 + Math.floor(rng() * 6);
+  for (let i = 0; i < count; i++) {
+    const d     = rng() * TS * 0.80;
+    const along = (rng() - 0.5) * TS * 0.92;
+    const bx    = cx + seaX * 0.5 * TS - seaX * d + alongX * along;
+    const by    = cy + seaY * 0.5 * TS - seaY * d + alongY * along;
+    const r     = 5 + rng() * 16;
+    const N     = 5 + Math.floor(rng() * 4);
+    const pts: { x: number; y: number }[] = [];
+    for (let j = 0; j < N; j++) {
+      const ang = (j / N) * Math.PI * 2;
+      const rv  = r * (0.55 + rng() * 0.55);
+      pts.push({ x: bx + Math.cos(ang) * rv, y: by + Math.sin(ang) * rv * 0.60 });
+    }
+    // Shadow
+    g.fillStyle(0x000000, 0.14);
+    g.fillPoints(pts.map(p => ({ x: p.x + 2, y: p.y + 2 })), true);
+    // Rock body
+    g.fillStyle(rng() < 0.4 ? 0x5a5848 : 0x6a6858, 0.88);
+    g.fillPoints(pts, true);
+    // Highlight
+    g.fillStyle(0x9a9888, 0.40);
+    g.fillCircle(bx - r * 0.22, by - r * 0.18, r * 0.36);
   }
 }

@@ -10,12 +10,25 @@ export function GameHUD() {
 
   const { resources, population, kingsFavor } = myDuchy;
   const hasPendingDemand = session.currentKingDemand !== null;
+  const hasPendingOffer  = session.kingsTileOffer !== null;
+  const isBlocked = hasPendingDemand || hasPendingOffer;
   const favorPct = Math.max(0, Math.min(100, kingsFavor));
   const favorColor = favorPct < 25 ? '#e05050' : favorPct < 50 ? '#e0a030' : '#c9a227';
 
+  let endTurnLabel = 'End Turn →';
+  if (hasPendingDemand) endTurnLabel = '⚠ King Demands…';
+  else if (hasPendingOffer) endTurnLabel = '👑 King Offers…';
+
   return (
     <div className="hud-bar">
-      <div className="hud-duchy-name">{myDuchy.name}</div>
+      <div className="hud-duchy-name">
+        <span
+          className="duchy-color-dot"
+          style={{ background: myDuchy.color }}
+          title="Your duchy color"
+        />
+        {myDuchy.name}
+      </div>
 
       <div className="hud-resources">
         <span title="Grain">🌾 {resources.grain}</span>
@@ -38,12 +51,16 @@ export function GameHUD() {
       <div className="hud-turn">Turn {session.turnNumber} / {session.maxTurns}</div>
 
       <button
-        className={`btn-end-turn ${hasPendingDemand ? 'btn-end-turn--blocked' : ''}`}
+        className={`btn-end-turn ${isBlocked ? 'btn-end-turn--blocked' : ''}`}
         onClick={endTurn}
-        disabled={hasPendingDemand}
-        title={hasPendingDemand ? "Respond to the King's demand first" : 'End your turn and collect resources'}
+        disabled={isBlocked}
+        title={
+          hasPendingDemand ? "Respond to the King's demand first"
+          : hasPendingOffer ? "Respond to the King's offer first"
+          : 'End your turn and collect resources'
+        }
       >
-        {hasPendingDemand ? '⚠ King Demands…' : 'End Turn →'}
+        {endTurnLabel}
       </button>
     </div>
   );

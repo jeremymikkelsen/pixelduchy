@@ -3,7 +3,7 @@ import { useUIStore } from '../../store/uiStore';
 import { BUILDING_COSTS, BUILDING_DESCRIPTIONS, canAfford } from '../../game/systems/turnEngine';
 import type { BuildingType } from '../../types';
 
-const BUILDABLE: BuildingType[] = ['mill', 'mine', 'sawmill', 'port', 'barracks', 'market', 'church', 'castle'];
+const BUILDABLE: BuildingType[] = ['house', 'mill', 'mine', 'sawmill', 'port', 'barracks', 'market', 'church', 'castle'];
 
 /**
  * TilePanel - shows tile info and a build menu when clicking an owned tile.

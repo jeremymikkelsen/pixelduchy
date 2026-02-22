@@ -956,6 +956,32 @@ function drawCastle(ctx: CanvasRenderingContext2D, s: number) {
   ctx.fillRect(cx + 1, keepY - s * 0.14, 14, 4);
 }
 
+function drawHouse(ctx: CanvasRenderingContext2D, s: number) {
+  const l = drawGabled(ctx, s, {
+    rf: '#c07840',   // warm thatch brown
+    rb: '#8a5020',
+    rr: '#d09060',
+    wc: '#d4c8a8',   // cream plaster
+    bwf: 0.52,
+    whf: 0.16,
+    detail: (ctx2, cx, eavesY, wallBotY, eavesW) => {
+      // Timber framing lines
+      ctx2.strokeStyle = '#6a4020';
+      ctx2.lineWidth = 1.2;
+      ctx2.beginPath();
+      ctx2.moveTo(cx, eavesY); ctx2.lineTo(cx, wallBotY);
+      ctx2.stroke();
+      ctx2.beginPath();
+      ctx2.moveTo(cx - eavesW / 2, eavesY + (wallBotY - eavesY) * 0.5);
+      ctx2.lineTo(cx + eavesW / 2, eavesY + (wallBotY - eavesY) * 0.5);
+      ctx2.stroke();
+      doorPx(ctx2, cx + eavesW * 0.2, eavesY + 3, 11, wallBotY - eavesY - 4);
+      windowPx(ctx2, cx - eavesW * 0.38, eavesY + 5, 9, 7);
+    },
+  });
+  chimneyPx(ctx, s, l.cx - l.ridgeW * 0.25, l.topY, l.ridgeY, true);
+}
+
 // ─── Registry & export ────────────────────────────────────────────────────────
 
 const BUILDING_DRAWERS: Record<BuildingType, DrawFn> = {
@@ -973,6 +999,7 @@ const BUILDING_DRAWERS: Record<BuildingType, DrawFn> = {
   market:     drawMarket,
   church:     drawChurch,
   castle:     drawCastle,
+  house:      drawHouse,
 };
 
 export function registerBuildingTextures(

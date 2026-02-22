@@ -73,10 +73,10 @@ export class MapScene extends Phaser.Scene {
         this.renderBiomeTransitions();
       }
 
-      this.renderOverlays(state.myDuchy);
+      this.renderOverlays(state.allDuchies);
     });
 
-    this.renderOverlays(useGameStore.getState().myDuchy);
+    this.renderOverlays(useGameStore.getState().allDuchies);
   }
 
   shutdown() {
@@ -291,36 +291,60 @@ export class MapScene extends Phaser.Scene {
 
   // ─── Territory + building overlays ───────────────────────────────────────────
 
-  private renderOverlays(duchy: Duchy | null) {
+  private renderOverlays(allDuchies: Duchy[]) {
     this.territoryOverlay.clear();
     this.buildingSprites.forEach(s => s.destroy());
     this.buildingSprites = [];
-    if (!duchy) return;
 
-    const ownedSet = new Set(duchy.tiles.map(({ x, y }) => `${x},${y}`));
+    for (const duchy of allDuchies) {
+      const color = parseInt(duchy.color.replace('#', ''), 16);
+      const ownedSet = new Set(duchy.tiles.map(({ x, y }) => `${x},${y}`));
 
-    this.territoryOverlay.fillStyle(0xff2020, 0.12);
-    for (const { x, y } of duchy.tiles) {
-      this.territoryOverlay.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
-    }
+      // Territory fill (semi-transparent)
+      this.territoryOverlay.fillStyle(color, 0.15);
+      for (const { x, y } of duchy.tiles) {
+        this.territoryOverlay.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+      }
 
-    this.territoryOverlay.lineStyle(3, 0xff2020, 1.0);
-    for (const { x, y } of duchy.tiles) {
-      const px = x * TILE_SIZE;
-      const py = y * TILE_SIZE;
-      if (!ownedSet.has(`${x},${y - 1}`)) this.territoryOverlay.lineBetween(px, py, px + TILE_SIZE, py);
-      if (!ownedSet.has(`${x},${y + 1}`)) this.territoryOverlay.lineBetween(px, py + TILE_SIZE, px + TILE_SIZE, py + TILE_SIZE);
-      if (!ownedSet.has(`${x - 1},${y}`)) this.territoryOverlay.lineBetween(px, py, px, py + TILE_SIZE);
-      if (!ownedSet.has(`${x + 1},${y}`)) this.territoryOverlay.lineBetween(px + TILE_SIZE, py, px + TILE_SIZE, py + TILE_SIZE);
-    }
+      // Territory border
+      this.territoryOverlay.lineStyle(3, color, 1.0);
+      for (const { x, y } of duchy.tiles) {
+        const px = x * TILE_SIZE;
+        const py = y * TILE_SIZE;
+        if (!ownedSet.has(`${x},${y - 1}`)) this.territoryOverlay.lineBetween(px, py, px + TILE_SIZE, py);
+        if (!ownedSet.has(`${x},${y + 1}`)) this.territoryOverlay.lineBetween(px, py + TILE_SIZE, px + TILE_SIZE, py + TILE_SIZE);
+        if (!ownedSet.has(`${x - 1},${y}`)) this.territoryOverlay.lineBetween(px, py, px, py + TILE_SIZE);
+        if (!ownedSet.has(`${x + 1},${y}`)) this.territoryOverlay.lineBetween(px + TILE_SIZE, py, px + TILE_SIZE, py + TILE_SIZE);
+      }
 
-    for (const building of duchy.buildings) {
-      const sprite = this.add.image(
-        building.tileX * TILE_SIZE,
-        building.tileY * TILE_SIZE,
-        `building-${building.type}`,
-      ).setOrigin(0, 0).setDepth(2);
-      this.buildingSprites.push(sprite);
+      // Roads connecting buildings via MST
+      if (duchy.buildings.length >= 2) {
+        const pts = duchy.buildings.map(b => ({ x: b.tileX, y: b.tileY }));
+        const edges = computeMST(pts);
+        this.territoryOverlay.lineStyle(7, 0x7a5828, 0.80);
+        for (const [a, b] of edges) {
+          const ax = (a.x + 0.5) * TILE_SIZE, ay = (a.y + 0.5) * TILE_SIZE;
+          const bx = (b.x + 0.5) * TILE_SIZE, by = (b.y + 0.5) * TILE_SIZE;
+          this.territoryOverlay.lineBetween(ax, ay, bx, by);
+        }
+        // Thin highlight stripe on roads
+        this.territoryOverlay.lineStyle(2, 0xc0a060, 0.35);
+        for (const [a, b] of edges) {
+          const ax = (a.x + 0.5) * TILE_SIZE, ay = (a.y + 0.5) * TILE_SIZE;
+          const bx = (b.x + 0.5) * TILE_SIZE, by = (b.y + 0.5) * TILE_SIZE;
+          this.territoryOverlay.lineBetween(ax, ay, bx, by);
+        }
+      }
+
+      // Building sprites
+      for (const building of duchy.buildings) {
+        const sprite = this.add.image(
+          building.tileX * TILE_SIZE,
+          building.tileY * TILE_SIZE,
+          `building-${building.type}`,
+        ).setOrigin(0, 0).setDepth(2);
+        this.buildingSprites.push(sprite);
+      }
     }
   }
 
@@ -370,6 +394,31 @@ export class MapScene extends Phaser.Scene {
     if (this.cursors.up.isDown)    this.cameras.main.scrollY -= speed;
     if (this.cursors.down.isDown)  this.cameras.main.scrollY += speed;
   }
+}
+
+// ─── MST (Prim's) for road layout ─────────────────────────────────────────────
+
+function computeMST(
+  pts: { x: number; y: number }[],
+): [{ x: number; y: number }, { x: number; y: number }][] {
+  if (pts.length < 2) return [];
+  const edges: [{ x: number; y: number }, { x: number; y: number }][] = [];
+  const inMST = new Set([0]);
+  while (inMST.size < pts.length) {
+    let bestDist = Infinity, bestI = -1, bestJ = -1;
+    for (const i of inMST) {
+      for (let j = 0; j < pts.length; j++) {
+        if (inMST.has(j)) continue;
+        const dx = pts[i].x - pts[j].x, dy = pts[i].y - pts[j].y;
+        const d = dx * dx + dy * dy;
+        if (d < bestDist) { bestDist = d; bestI = i; bestJ = j; }
+      }
+    }
+    if (bestJ === -1) break;
+    edges.push([pts[bestI], pts[bestJ]]);
+    inMST.add(bestJ);
+  }
+  return edges;
 }
 
 // ─── Catmull-Rom spline helper ────────────────────────────────────────────────

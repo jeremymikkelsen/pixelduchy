@@ -58,10 +58,23 @@ html, body, #root {
 }
 
 .hud-duchy-name {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   font-weight: 700;
   font-size: 1rem;
   color: #f5d87a;
   min-width: 120px;
+}
+
+.duchy-color-dot {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  border: 1.5px solid rgba(255,255,255,0.4);
+  box-shadow: 0 0 4px rgba(0,0,0,0.5);
 }
 
 .hud-resources {
@@ -342,6 +355,21 @@ html, body, #root {
   justify-content: center;
   margin-top: 0.5rem;
 }
+
+/* ─── King tile offer modal ───────────────────────────────────────────────────── */
+.offer-seal { font-size: 2.5rem; }
+
+.offer-title {
+  font-size: 1.3rem;
+  font-weight: 800;
+  color: #7db854;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.offer-body { font-size: 0.9rem; color: #ccc; line-height: 1.6; }
+.offer-body strong { color: #f5d87a; }
+.offer-sub { font-size: 0.8rem; color: #8ab; }
 
 /* ─── Game result overlay ─────────────────────────────────────────────────────── */
 .result-modal { padding: 2.5rem; }

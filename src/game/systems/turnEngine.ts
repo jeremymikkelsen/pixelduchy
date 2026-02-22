@@ -20,6 +20,8 @@ export const BUILDING_COSTS: Record<BuildingType, Partial<Resources>> = {
   market:   { gold: 3, cloth: 2 },
   church:   { timber: 4, gold: 2 },
   castle:   { timber: 8, ore: 6, gold: 4 },
+  // Residential
+  house:    { timber: 2, grain: 1 },
 };
 
 export const BUILDING_YIELDS: Record<BuildingType, Partial<Resources>> = {
@@ -40,13 +42,15 @@ export const BUILDING_YIELDS: Record<BuildingType, Partial<Resources>> = {
   market:   { gold: 3 },
   church:   {},
   castle:   { gold: 2 },
+  // Residential
+  house:    {},
 };
 
 /** Favor granted once on construction */
 export const BUILDING_FAVOR: Record<BuildingType, number> = {
   field: 0, pasture: 0, orchard: 0, fishery: 0, smokehouse: 0, kitchen: 0,
   mill: 0, mine: 0, sawmill: 0, port: 0,
-  barracks: 0, market: 0, church: 3, castle: 0,
+  barracks: 0, market: 0, church: 3, castle: 0, house: 0,
 };
 
 /** Short code shown on the map tile */
@@ -54,7 +58,7 @@ export const BUILDING_LABELS: Record<BuildingType, string> = {
   field: 'FLD', pasture: 'PST', orchard: 'ORC', fishery: 'FSH',
   smokehouse: 'SMK', kitchen: 'KTC',
   mill: 'MLI', mine: 'MNE', sawmill: 'SAW', port: 'PRT',
-  barracks: 'BRK', market: 'MKT', church: 'CHR', castle: 'CST',
+  barracks: 'BRK', market: 'MKT', church: 'CHR', castle: 'CST', house: 'HSE',
 };
 
 export const BUILDING_DESCRIPTIONS: Record<BuildingType, string> = {
@@ -72,6 +76,7 @@ export const BUILDING_DESCRIPTIONS: Record<BuildingType, string> = {
   market:   '+3 gold/turn',
   church:   '+3 favor on build',
   castle:   '+2 gold/turn',
+  house:    '+10 population capacity',
 };
 
 // ─── Resource helpers ─────────────────────────────────────────────────────────
@@ -135,6 +140,31 @@ export function generateKingDemand(turnNumber: number): KingDemand {
 }
 
 // ─── Map helpers ──────────────────────────────────────────────────────────────
+
+export function findAdjacentUnclaimedTile(
+  tiles: { x: number; y: number }[],
+  map: WorldMap,
+): { x: number; y: number } | null {
+  const owned = new Set(tiles.map(t => `${t.x},${t.y}`));
+  const seen = new Set<string>();
+  const candidates: { x: number; y: number }[] = [];
+
+  for (const { x, y } of tiles) {
+    for (const [dx, dy] of [[0, 1], [0, -1], [1, 0], [-1, 0]] as [number, number][]) {
+      const nx = x + dx, ny = y + dy;
+      const key = `${nx},${ny}`;
+      if (nx < 0 || ny < 0 || nx >= map.width || ny >= map.height) continue;
+      if (owned.has(key) || seen.has(key)) continue;
+      seen.add(key);
+      const tile = map.tiles[ny]?.[nx];
+      if (!tile || tile.type === 'ocean' || tile.duchyId !== null) continue;
+      candidates.push({ x: nx, y: ny });
+    }
+  }
+
+  if (candidates.length === 0) return null;
+  return candidates[Math.floor(Math.random() * candidates.length)];
+}
 
 export function findStartingTile(map: WorldMap): { x: number; y: number } {
   const cx = Math.floor(map.width / 2);

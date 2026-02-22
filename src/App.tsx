@@ -4,6 +4,7 @@ import { MainMenu } from './components/menus/MainMenu';
 import { GameHUD } from './components/hud/GameHUD';
 import { TilePanel } from './components/panels/TilePanel';
 import { KingDemandModal } from './components/panels/KingDemandModal';
+import { KingTileOfferModal } from './components/panels/KingTileOfferModal';
 import { GameResultOverlay } from './components/overlays/GameResultOverlay';
 import './App.css';
 
@@ -30,6 +31,7 @@ export default function App() {
           <GameHUD />
           <TilePanel />
           <KingDemandModal />
+          <KingTileOfferModal />
           <GameResultOverlay />
         </>
       )}

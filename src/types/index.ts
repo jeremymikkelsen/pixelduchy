@@ -45,7 +45,9 @@ export type BuildingType =
   | 'barracks'
   | 'market'
   | 'church'
-  | 'castle';
+  | 'castle'
+  // Residential
+  | 'house';
 
 /** Food distribution policy — governs how the duchy allocates food to the population. */
 export type DevelopmentMode = 'command' | 'incentivize' | 'laissez_faire';
@@ -228,6 +230,7 @@ export interface GameSession {
   playerCount: number;
   map: WorldMap;
   currentKingDemand: KingDemand | null;
+  kingsTileOffer: { x: number; y: number } | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -252,6 +255,8 @@ export interface GameStore {
   placeBuilding: (type: BuildingType, x: number, y: number) => boolean;
   fulfillDemand: () => void;
   refuseDemand: () => void;
+  acceptTileOffer: () => void;
+  declineTileOffer: () => void;
   setDistributionMode: (mode: DevelopmentMode) => void;
   restartGame: () => void;
 }

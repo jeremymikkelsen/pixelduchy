@@ -109,8 +109,11 @@ export class MapScene extends Phaser.Scene {
         img.setData('ty', y);
         img.setData('tt', tile.type);
 
-        img.on('pointerup', () => {
+        img.on('pointerup', (pointer: Phaser.Input.Pointer) => {
           if (this.dragMoved) return;
+          const ev = pointer.event as MouseEvent;
+          const el = document.elementFromPoint(ev.clientX, ev.clientY);
+          if (el?.closest('.panel, .hud-bar')) return;
           useUIStore.getState().setSelectedTile({ x, y });
         });
 

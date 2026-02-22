@@ -23,11 +23,7 @@ export function TilePanel() {
   const resources = myDuchy?.resources;
 
   return (
-    <div
-      className="panel tile-panel"
-      onPointerDown={e => e.stopPropagation()}
-      onPointerUp={e => e.stopPropagation()}
-    >
+    <div className="panel tile-panel">
       <button className="panel-close" onClick={() => setSelectedTile(null)}>✕</button>
 
       <h3>{tile.type.charAt(0).toUpperCase() + tile.type.slice(1)} ({x}, {y})</h3>

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { GameStore, GameSession, Duchy, Player, GameEvent, BuildingType, DuchyBuilding, DevelopmentMode, WorldMap } from '../types';
+import type { GameStore, GameSession, Duchy, Player, GameEvent, BuildingType, DuchyBuilding, DevelopmentMode, WorldMap, ResourceType } from '../types';
 import { generateWorld } from '../game/procgen/worldgen';
 import {
   harvestResources,
@@ -11,6 +11,7 @@ import {
   findStartingTile,
   findAdjacentUnclaimedTile,
 } from '../game/systems/turnEngine';
+import { getMarketPrices } from '../game/systems/marketEngine';
 
 const STARTER_RESOURCES = {
   grain: 20, timber: 15, ore: 8,
@@ -349,5 +350,43 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   restartGame: () => {
     get().initLocalGame();
+  },
+
+  buyResource: (resource: ResourceType, qty: number) => {
+    const { myDuchy, allDuchies } = get();
+    if (!myDuchy) return;
+    const currentStock = myDuchy.resources[resource] ?? 0;
+    const { buy } = getMarketPrices(resource, currentStock);
+    const totalCost = Math.round(buy * qty * 10) / 10;
+    if (myDuchy.resources.gold < totalCost) return;
+    const newResources = {
+      ...myDuchy.resources,
+      gold: Math.round((myDuchy.resources.gold - totalCost) * 10) / 10,
+      [resource]: currentStock + qty,
+    };
+    const newMyDuchy = { ...myDuchy, resources: newResources };
+    set({
+      myDuchy: newMyDuchy,
+      allDuchies: allDuchies.map(d => d.id === myDuchy.id ? newMyDuchy : d),
+    });
+  },
+
+  sellResource: (resource: ResourceType, qty: number) => {
+    const { myDuchy, allDuchies } = get();
+    if (!myDuchy) return;
+    const currentStock = myDuchy.resources[resource] ?? 0;
+    if (currentStock < qty) return;
+    const { sell } = getMarketPrices(resource, currentStock);
+    const totalGain = Math.round(sell * qty * 10) / 10;
+    const newResources = {
+      ...myDuchy.resources,
+      gold: Math.round((myDuchy.resources.gold + totalGain) * 10) / 10,
+      [resource]: currentStock - qty,
+    };
+    const newMyDuchy = { ...myDuchy, resources: newResources };
+    set({
+      myDuchy: newMyDuchy,
+      allDuchies: allDuchies.map(d => d.id === myDuchy.id ? newMyDuchy : d),
+    });
   },
 }));

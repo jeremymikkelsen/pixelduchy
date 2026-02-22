@@ -336,13 +336,24 @@ export class MapScene extends Phaser.Scene {
         }
       }
 
-      // Building sprites
+      // Building sprites — interactive so they relay clicks to their tile
       for (const building of duchy.buildings) {
+        const bx = building.tileX;
+        const by = building.tileY;
         const sprite = this.add.image(
-          building.tileX * TILE_SIZE,
-          building.tileY * TILE_SIZE,
+          bx * TILE_SIZE,
+          by * TILE_SIZE,
           `building-${building.type}`,
-        ).setOrigin(0, 0).setDepth(2);
+        ).setOrigin(0, 0).setDepth(2).setInteractive();
+
+        sprite.on('pointerup', (pointer: Phaser.Input.Pointer) => {
+          if (this.dragMoved) return;
+          const ev = pointer.event as MouseEvent;
+          const el = document.elementFromPoint(ev.clientX, ev.clientY);
+          if (el?.closest('.panel, .hud-bar')) return;
+          useUIStore.getState().setSelectedTile({ x: bx, y: by });
+        });
+
         this.buildingSprites.push(sprite);
       }
     }

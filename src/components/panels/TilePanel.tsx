@@ -2,6 +2,7 @@ import { useGameStore } from '../../store/gameStore';
 import { useUIStore } from '../../store/uiStore';
 import { BUILDING_COSTS, BUILDING_DESCRIPTIONS, canAfford } from '../../game/systems/turnEngine';
 import type { BuildingType } from '../../types';
+import { MarketPanel } from './MarketPanel';
 
 const BUILDABLE: BuildingType[] = ['house', 'mill', 'mine', 'sawmill', 'port', 'barracks', 'market', 'church', 'castle'];
 
@@ -22,8 +23,10 @@ export function TilePanel() {
   const existingBuilding = myDuchy?.buildings.find(b => b.tileX === x && b.tileY === y);
   const resources = myDuchy?.resources;
 
+  const isMarket = existingBuilding?.type === 'market';
+
   return (
-    <div className="panel tile-panel">
+    <div className={`panel tile-panel${isMarket ? ' tile-panel--market' : ''}`}>
       <button className="panel-close" onClick={() => setSelectedTile(null)}>✕</button>
 
       <h3>{tile.type.charAt(0).toUpperCase() + tile.type.slice(1)} ({x}, {y})</h3>
@@ -35,11 +38,18 @@ export function TilePanel() {
       {isOwned ? (
         <div className="build-section">
           {existingBuilding ? (
+            existingBuilding.type === 'market' ? (
+              <>
+                <p className="building-existing">🏗 <strong>Market</strong> (Lv {existingBuilding.level})</p>
+                <MarketPanel resources={resources!} />
+              </>
+            ) : (
             <p className="building-existing">
               🏗 <strong>{existingBuilding.type}</strong> (Lv {existingBuilding.level})
               <br />
               <span className="building-desc">{BUILDING_DESCRIPTIONS[existingBuilding.type]}</span>
             </p>
+            )
           ) : (
             <>
               <p className="build-header">Construct building:</p>

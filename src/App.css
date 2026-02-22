@@ -92,6 +92,17 @@ html, body, #root {
 .hud-favor { color: #c9a227; }
 .hud-turn  { margin-left: auto; color: #8ab; }
 
+.hud-gold-btn {
+  cursor: pointer;
+  border-color: rgba(201, 162, 39, 0.5) !important;
+  color: #f5d87a !important;
+  transition: background 0.12s, border-color 0.12s;
+}
+.hud-gold-btn:hover {
+  background: rgba(201, 162, 39, 0.2) !important;
+  border-color: #c9a227 !important;
+}
+
 .hud-panels {
   display: flex;
   gap: 0.5rem;
@@ -289,6 +300,105 @@ html, body, #root {
 .building-desc { font-size: 0.7rem; color: #8ab; }
 
 .tile-unowned { font-size: 0.8rem; color: #667; margin-top: 0.5rem; }
+
+/* ─── Market panel ────────────────────────────────────────────────────────────── */
+.tile-panel--market { max-width: 360px; }
+
+.market-panel { margin-top: 0.75rem; }
+
+.market-balance {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #f5d87a;
+  margin-bottom: 0.5rem;
+}
+
+.market-qty-selector {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.6rem;
+  font-size: 0.75rem;
+  color: #aaa;
+}
+
+.market-qty-btn {
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(255,255,255,0.05);
+  color: #e8dcc8;
+  cursor: pointer;
+  font-size: 0.75rem;
+  transition: background 0.12s;
+}
+.market-qty-btn:hover { background: rgba(255,255,255,0.12); }
+.market-qty-btn--active {
+  background: rgba(201, 162, 39, 0.3);
+  border-color: #c9a227;
+  color: #f5d87a;
+}
+
+.market-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+}
+
+.market-table th {
+  text-align: left;
+  color: #8ab;
+  font-weight: 600;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 4px 4px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.market-table td {
+  padding: 3px 4px;
+  vertical-align: middle;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+
+.market-resource-name {
+  color: #e8dcc8;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+
+.market-stock {
+  color: #aaa;
+  text-align: right;
+  min-width: 28px;
+}
+
+.market-btn {
+  padding: 2px 6px;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  font-size: 0.68rem;
+  cursor: pointer;
+  white-space: nowrap;
+  line-height: 1.4;
+  transition: background 0.12s;
+}
+.market-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.market-btn--sell {
+  background: rgba(125, 184, 84, 0.15);
+  border-color: rgba(125, 184, 84, 0.4);
+  color: #7db854;
+}
+.market-btn--sell:hover:not(:disabled) { background: rgba(125, 184, 84, 0.28); }
+
+.market-btn--buy {
+  background: rgba(138, 171, 200, 0.15);
+  border-color: rgba(138, 171, 200, 0.4);
+  color: #8ab;
+}
+.market-btn--buy:hover:not(:disabled) { background: rgba(138, 171, 200, 0.28); }
 
 /* ─── Modals ──────────────────────────────────────────────────────────────────── */
 .modal-backdrop {

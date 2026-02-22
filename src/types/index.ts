@@ -259,6 +259,8 @@ export interface GameStore {
   declineTileOffer: () => void;
   setDistributionMode: (mode: DevelopmentMode) => void;
   restartGame: () => void;
+  buyResource: (resource: ResourceType, qty: number) => void;
+  sellResource: (resource: ResourceType, qty: number) => void;
 }
 
 export interface UIStore {

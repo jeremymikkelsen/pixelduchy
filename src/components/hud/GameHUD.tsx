@@ -1,14 +1,17 @@
 import { useGameStore } from '../../store/gameStore';
+import { useUIStore } from '../../store/uiStore';
 
 /**
  * GameHUD - top bar showing key duchy stats, favor, and turn controls.
  */
 export function GameHUD() {
   const { session, myDuchy, endTurn } = useGameStore();
+  const { setSelectedTile } = useUIStore();
 
   if (!session || !myDuchy) return null;
 
   const { resources, population, kingsFavor } = myDuchy;
+  const marketBuilding = myDuchy.buildings.find(b => b.type === 'market');
   const hasPendingDemand = session.currentKingDemand !== null;
   const hasPendingOffer  = session.kingsTileOffer !== null;
   const isBlocked = hasPendingDemand || hasPendingOffer;
@@ -36,7 +39,13 @@ export function GameHUD() {
         <span title="Ore">⛏️ {resources.ore}</span>
         <span title="Cloth">🧵 {resources.cloth}</span>
         <span title="Fish">🐟 {resources.fish}</span>
-        <span title="Gold">💰 {resources.gold}</span>
+        <span
+          title={marketBuilding ? 'Open Market' : 'Gold (build a market to trade)'}
+          className={marketBuilding ? 'hud-gold-btn' : ''}
+          onClick={marketBuilding ? () => setSelectedTile({ x: marketBuilding.tileX, y: marketBuilding.tileY }) : undefined}
+        >
+          💰 {resources.gold}
+        </span>
         <span title="Population">👥 {population.total}</span>
       </div>
 

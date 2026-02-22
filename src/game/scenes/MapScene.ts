@@ -162,7 +162,7 @@ export class MapScene extends Phaser.Scene {
           const nx = x + dx, ny = y + dy;
           if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
           const neighbor = tiles[ny][nx];
-          if (neighbor.type === tile.type || neighbor.type === 'ocean') continue;
+          if (neighbor.type === tile.type) continue;
 
           // Unique, reproducible seed per directed edge (tile → neighbor direction)
           const rng = makeRng(((x * 7919 + y * 6271 + (dx + 2) * 3581 + (dy + 2) * 4127) * 2053) >>> 0);
@@ -171,11 +171,19 @@ export class MapScene extends Phaser.Scene {
           const edgeCX = (x + 0.5 + dx * 0.5) * TS;
           const edgeCY = (y + 0.5 + dy * 0.5) * TS;
 
-          const isForestEdge = tile.type === 'forest' || neighbor.type === 'forest';
-          const count = isForestEdge ? 4 + Math.floor(rng() * 3) : 2 + Math.floor(rng() * 2);
+          const isForestEdge  = tile.type === 'forest'  || neighbor.type === 'forest';
+          const isOceanEdge   = neighbor.type === 'ocean';
+          const isWetlandEdge = tile.type === 'wetland' || neighbor.type === 'wetland';
+          const count = isForestEdge  ? 4 + Math.floor(rng() * 3)
+                      : isOceanEdge   ? 4 + Math.floor(rng() * 4)
+                      : isWetlandEdge ? 3 + Math.floor(rng() * 3)
+                      : 2 + Math.floor(rng() * 2);
           for (let i = 0; i < count; i++) {
             const along = (rng() - 0.5) * (TS - 10);
-            const depth = isForestEdge ? 14 + rng() * 36 : 6 + rng() * 14;
+            const depth = isForestEdge  ? 14 + rng() * 36
+                        : isOceanEdge   ? 8  + rng() * 40
+                        : isWetlandEdge ? 8  + rng() * 28
+                        : 6 + rng() * 14;
             // Normal into tile = (-dx, -dy); perpendicular along edge = (-dy, dx)
             const px = edgeCX + (-dy) * along - dx * depth;
             const py = edgeCY + ( dx) * along - dy * depth;
@@ -193,6 +201,11 @@ export class MapScene extends Phaser.Scene {
     rng: () => number, season: number,
   ): void {
     const g = this.biomeTransitionLayer;
+    // Beach strip on any land tile bordering ocean
+    if (toType === 'ocean') {
+      transitionBeach(g, px, py, rng, season);
+      return;
+    }
     switch (fromType) {
       case 'forest':
         transitionTree(g, px, py, rng, season);
@@ -209,7 +222,7 @@ export class MapScene extends Phaser.Scene {
         transitionPebble(g, px, py, rng, season);
         break;
       case 'wetland':
-        transitionReed(g, px, py, rng, season);
+        transitionWaterEdge(g, px, py, rng, season);
         break;
       case 'coast':
         transitionPebble(g, px, py, rng, season);
@@ -322,6 +335,39 @@ export class MapScene extends Phaser.Scene {
           const palIdx    = Math.floor(layoutRng() * 4);
           const radius    = 26 + layoutRng() * 22; // 26–48 px
 
+          if (isConifer) {
+            vegConifer(this.vegetationLayer, wx, wy, visualRng, season === 3);
+          } else if (season === 3) {
+            vegBareTree(this.vegetationLayer, wx, wy, visualRng);
+          } else {
+            vegBroadleaf(this.vegetationLayer, wx, wy, radius,
+              palettes[palIdx % palettes.length], visualRng);
+          }
+        }
+      }
+    }
+
+    // Scatter occasional solitary trees on non-forest tiles
+    const SCATTER_CHANCE: Partial<Record<string, number>> = {
+      plains: 0.22, coast: 0.10, wetland: 0.14, mountain: 0.05,
+    };
+    for (let ty = 0; ty < height; ty++) {
+      for (let tx = 0; tx < width; tx++) {
+        const tileType = tiles[ty][tx].type;
+        const chance = SCATTER_CHANCE[tileType];
+        if (!chance) continue;
+
+        const layoutRng = makeRng((tx * 5003 + ty * 6661 + 99) >>> 0);
+        if (layoutRng() >= chance) continue;
+
+        const visualRng = makeRng((tx * 8191 + ty * 5749 + season * 997) >>> 0);
+        const count = 1 + Math.floor(layoutRng() * (tileType === 'plains' ? 2 : 1));
+        for (let i = 0; i < count; i++) {
+          const wx = (tx + 0.05 + layoutRng() * 0.90) * TILE_SIZE;
+          const wy = (ty + 0.05 + layoutRng() * 0.90) * TILE_SIZE;
+          const isConifer = tileType === 'mountain' || layoutRng() < 0.25;
+          const palIdx    = Math.floor(layoutRng() * 4);
+          const radius    = 14 + layoutRng() * 14; // 14–28 px
           if (isConifer) {
             vegConifer(this.vegetationLayer, wx, wy, visualRng, season === 3);
           } else if (season === 3) {
@@ -638,12 +684,13 @@ function vegBroadleaf(
   cx: number, cy: number, radius: number,
   p: VegPalette, rng: () => number,
 ) {
+  // Drop shadow
   g.fillStyle(0x000000, 0.20);
   g.fillEllipse(cx + radius * 0.12, cy + radius * 0.18, radius * 2.0, radius * 1.2);
-  g.fillStyle(p.trunk, 0.92);
-  g.fillEllipse(cx, cy + radius * 0.28, radius * 0.48, radius * 0.30);
+  // Canopy base
   g.fillStyle(p.base, 1.0);
   g.fillCircle(cx, cy, radius);
+  // Midtone blobs
   const blobs = 3 + Math.floor(rng() * 3);
   for (let i = 0; i < blobs; i++) {
     const ang = rng() * Math.PI * 2;
@@ -652,10 +699,18 @@ function vegBroadleaf(
     g.fillStyle(p.mid, 0.82);
     g.fillCircle(cx + Math.cos(ang) * d, cy + Math.sin(ang) * d, br);
   }
+  // Specular highlight
   g.fillStyle(p.hi, 0.50);
   g.fillCircle(cx - radius * 0.32, cy - radius * 0.34, radius * 0.50);
+  // Depth shadow
   g.fillStyle(0x000000, 0.28);
   g.fillCircle(cx + radius * 0.28, cy + radius * 0.30, radius * 0.44);
+  // Trunk — drawn last so it shows below the canopy
+  const tw = radius * 0.13;
+  g.fillStyle(0x000000, 0.18);
+  g.fillRect(cx - tw + 2, cy + radius * 0.72 + 2, tw * 2, radius * 0.55);
+  g.fillStyle(p.trunk, 1.0);
+  g.fillRect(cx - tw, cy + radius * 0.72, tw * 2, radius * 0.55);
 }
 
 function vegConifer(
@@ -810,5 +865,52 @@ function transitionSparseGrass(
     g.moveTo(px + ox, py);
     g.lineTo(px + ox + (rng() - 0.5) * 3, py - h);
     g.strokePath();
+  }
+}
+
+function transitionBeach(
+  g: Phaser.GameObjects.Graphics,
+  px: number, py: number,
+  rng: () => number, season: number,
+): void {
+  const sandColor = season === 3 ? 0xb8a080 : 0xd4b464;
+  const r = 6 + rng() * 10;
+  // Shadow
+  g.fillStyle(0x000000, 0.08);
+  g.fillEllipse(px + 1.5, py + 1.5, r * 2.4, r * 1.4);
+  // Sand patch
+  g.fillStyle(sandColor, 0.70);
+  g.fillEllipse(px, py, r * 2.4, r * 1.4);
+  // Lighter highlight
+  g.fillStyle(season === 3 ? 0xd0c0a0 : 0xe8d090, 0.45);
+  g.fillEllipse(px - r * 0.25, py - r * 0.2, r * 1.3, r * 0.75);
+  // Occasional shell or pebble
+  if (rng() < 0.40) {
+    const col = rng() < 0.5 ? 0xf0e0c8 : 0x909888;
+    g.fillStyle(col, 0.65);
+    g.fillCircle(px + (rng() - 0.5) * r * 1.2, py + (rng() - 0.5) * r * 0.7, 1.0 + rng() * 1.8);
+  }
+}
+
+function transitionWaterEdge(
+  g: Phaser.GameObjects.Graphics,
+  px: number, py: number,
+  rng: () => number, season: number,
+): void {
+  const r = 5 + rng() * 9;
+  if (rng() < 0.55) {
+    // Bleed water pool
+    const waterColor = season === 3 ? 0x7aa8b8 : 0x2a6890;
+    g.fillStyle(0x000000, 0.12);
+    g.fillEllipse(px + 1.5, py + 1.5, r * 2.2, r * 1.2);
+    g.fillStyle(waterColor, 0.55);
+    g.fillEllipse(px, py, r * 2.2, r * 1.2);
+    g.fillStyle(season === 3 ? 0xbce0f0 : 0x60b0d0, 0.30);
+    g.fillEllipse(px - r * 0.22, py - r * 0.18, r * 1.1, r * 0.6);
+  } else {
+    // Muddy reed patch
+    g.fillStyle(season === 3 ? 0x506060 : 0x3a5830, 0.45);
+    g.fillEllipse(px, py, r * 2.6, r * 1.3);
+    transitionReed(g, px, py, rng, season);
   }
 }

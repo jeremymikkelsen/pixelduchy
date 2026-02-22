@@ -230,64 +230,6 @@ function drawRock(
   ctx.fill();
 }
 
-// ─── Crop field drawer (used by ~45% of plains variants) ─────────────────────
-function drawCropField(ctx: CanvasRenderingContext2D, size: number, rng: () => number, season: number) {
-  const soilColor = season === 3 ? '#6a5030' : '#7a5a28';
-  ctx.fillStyle = soilColor;
-  ctx.fillRect(0, 0, size, size);
-
-  if (season === 3) {
-    // Winter: bare furrows with frost
-    ctx.strokeStyle = 'rgba(90,70,40,0.65)';
-    ctx.lineWidth = 1.8;
-    ctx.save();
-    ctx.translate(size / 2, size / 2);
-    ctx.rotate((rng() - 0.5) * 0.8);
-    for (let xi = -size; xi < size; xi += 6) {
-      ctx.beginPath(); ctx.moveTo(xi, -size); ctx.lineTo(xi, size); ctx.stroke();
-    }
-    ctx.restore();
-    for (let i = 0; i < 5; i++) {
-      radialPatch(ctx, rng() * size, rng() * size, 5 + rng() * 10,
-        `rgba(215,228,245,${(0.28 + rng() * 0.22).toFixed(2)})`);
-    }
-    return;
-  }
-
-  const CROPS = [
-    { stroke: 'rgba(204,170,38,0.88)', lineW: 2.5 },  // wheat
-    { stroke: 'rgba(76,140,38,0.82)',  lineW: 2.0 },  // leafy greens
-    { stroke: 'rgba(140,160,55,0.82)', lineW: 2.0 },  // mixed grain
-    { stroke: 'rgba(88,122,32,0.86)',  lineW: 2.2 },  // vegetables
-  ];
-  let { stroke, lineW } = CROPS[Math.floor(rng() * CROPS.length)];
-  if (season === 2) { stroke = 'rgba(158,118,38,0.72)'; lineW = 1.8; } // fall harvest
-
-  ctx.save();
-  ctx.translate(size / 2, size / 2);
-  ctx.rotate((rng() - 0.5) * 0.9);
-  ctx.strokeStyle = stroke;
-  ctx.lineWidth = lineW;
-  const spacing = 5 + Math.floor(rng() * 4);
-  for (let xi = -size; xi < size; xi += spacing) {
-    ctx.beginPath();
-    ctx.moveTo(xi, -size);
-    ctx.lineTo(xi + (rng() - 0.5) * 2, size);
-    ctx.stroke();
-  }
-  ctx.restore();
-
-  if (season === 0) {
-    const FC = ['rgba(220,50,50,0.88)', 'rgba(255,240,80,0.82)', 'rgba(200,100,200,0.72)'];
-    for (let i = 0; i < 4; i++) {
-      ctx.fillStyle = FC[Math.floor(rng() * FC.length)];
-      ctx.beginPath();
-      ctx.arc(rng() * size, rng() * size, 0.8 + rng() * 1.2, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-}
-
 // ─── Biome drawers ────────────────────────────────────────────────────────────
 function drawOcean(ctx: CanvasRenderingContext2D, size: number, rng: () => number, season: number, _layoutRng: () => number) {
   // Winter: dark stormy; Fall: slightly darker; Spring/Summer: bright blue
@@ -356,13 +298,7 @@ function drawCoast(ctx: CanvasRenderingContext2D, size: number, rng: () => numbe
   }
 }
 
-function drawPlains(ctx: CanvasRenderingContext2D, size: number, rng: () => number, season: number, layoutRng: () => number) {
-  // ~45 % of plains tiles are cultivated crop fields
-  if (layoutRng() < 0.45) {
-    drawCropField(ctx, size, rng, season);
-    return;
-  }
-
+function drawPlains(ctx: CanvasRenderingContext2D, size: number, rng: () => number, season: number, _layoutRng: () => number) {
   const bases = ['#5a9a30', '#4a8820', '#8a7820', '#585f54'];
   ctx.fillStyle = bases[season];
   ctx.fillRect(0, 0, size, size);

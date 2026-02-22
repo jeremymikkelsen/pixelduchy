@@ -55,9 +55,14 @@ function valueNoise(width: number, height: number, rng: () => number, scale: num
 // ─── Tile classification ──────────────────────────────────────────────────────
 
 function classifyTile(elevation: number, moisture: number, distToEdge: number): TileType {
-  if (distToEdge < 0.12 || elevation < 0.25) return 'ocean';
-  if (elevation < 0.32) return 'coast';
-  if (elevation > 0.72) return 'mountain';
+  // Quadratic falloff: suppresses elevation near edges → guaranteed ocean border,
+  // single cohesive landmass, no inland seas.
+  const falloff = Math.pow(1 - distToEdge, 2) * 1.2;
+  const e = elevation - falloff;   // island-adjusted elevation
+
+  if (e < 0.25) return 'ocean';    // covers distToEdge ≤ ~0.22 → always ocean
+  if (e < 0.34) return 'coast';
+  if (elevation > 0.72) return 'mountain'; // raw-elevation threshold (no falloff adjustment needed)
   if (moisture > 0.65) return 'wetland';
   if (moisture > 0.45) return 'forest';
   if (moisture < 0.25) return 'desert';

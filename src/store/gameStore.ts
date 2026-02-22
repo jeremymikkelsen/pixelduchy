@@ -45,7 +45,7 @@ function findAIStart(
     const x = 3 + Math.floor(rng() * (width - 6));
     const y = 3 + Math.floor(rng() * (height - 6));
     const tile = tiles[y]?.[x];
-    if (!tile || (tile.type !== 'plains' && tile.type !== 'forest')) continue;
+    if (!tile || tile.type !== 'plains') continue;
     const tooClose = occupied.some(o => {
       const dx = o.x - x, dy = o.y - y;
       return Math.sqrt(dx * dx + dy * dy) < minDist;

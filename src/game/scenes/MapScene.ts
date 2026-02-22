@@ -3,17 +3,22 @@ import { generateWorld } from '../procgen/worldgen';
 import { useUIStore } from '../../store/uiStore';
 import { useGameStore } from '../../store/gameStore';
 import { TILE_SIZE, NUM_TILE_VARIANTS, getSeasonIndex } from '../procgen/tileRenderer';
-import type { WorldMap, Tile, Duchy, TileType } from '../../types';
+import type { WorldMap, Duchy, TileType } from '../../types';
 
 /**
  * MapScene - renders the game world tilemap and handles camera/input.
  */
 export class MapScene extends Phaser.Scene {
   private world!: WorldMap;
-  private tileGroup!: Phaser.GameObjects.Group;
-  private biomeTransitionLayer!: Phaser.GameObjects.Graphics;
-  private territoryOverlay!: Phaser.GameObjects.Graphics;
-  private riverGraphics!: Phaser.GameObjects.Graphics;
+  private tileLayer!: Phaser.GameObjects.RenderTexture;
+  // Static overlay layers: baked to RenderTextures so scrolling costs ~6 GPU vertices
+  // instead of re-executing thousands of draw commands every frame.
+  private biomeTransitionLayer!: Phaser.GameObjects.RenderTexture;
+  private beachLayer!: Phaser.GameObjects.RenderTexture;
+  private vegetationLayer!: Phaser.GameObjects.RenderTexture;
+  // Dynamic layers (redrawn each turn / state-update)
+  private territoryLayer!: Phaser.GameObjects.RenderTexture;
+  private riverLayer!: Phaser.GameObjects.RenderTexture;
   private buildingSprites: Phaser.GameObjects.Image[] = [];
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   private isDragging = false;
@@ -24,8 +29,6 @@ export class MapScene extends Phaser.Scene {
   private dragScreenStartY = 0;
   private unsubscribeStore?: () => void;
   private currentSeasonIndex = 0;
-  private vegetationLayer!: Phaser.GameObjects.Graphics;
-  private beachLayer!: Phaser.GameObjects.Graphics;
 
   constructor() {
     super({ key: 'MapScene' });
@@ -36,15 +39,21 @@ export class MapScene extends Phaser.Scene {
     this.world = existingSession?.map ?? generateWorld({ width: 64, height: 64, seed: Date.now() });
     this.currentSeasonIndex = getSeasonIndex(existingSession?.turnNumber ?? 1);
 
-    this.tileGroup = this.add.group();
-    // Depth: tiles(0) → transitions(0.35) → beach(0.42) → rivers(0.5) → vegetation(0.55) → territory(1)
-    this.biomeTransitionLayer = this.add.graphics().setDepth(0.35);
-    this.beachLayer = this.add.graphics().setDepth(0.42);
-    this.riverGraphics = this.add.graphics().setDepth(0.5);
-    this.vegetationLayer = this.add.graphics().setDepth(0.55);
-    this.territoryOverlay = this.add.graphics().setDepth(1);
+    // Static overlays baked to RenderTextures — drawn once per update then
+    // replayed as a single textured quad every frame (no per-frame command replay).
+    // Tile layer is full-res; overlay layers are half-res (displayed at scale 2).
+    const worldW = this.world.width * TILE_SIZE;
+    const worldH = this.world.height * TILE_SIZE;
+    const rtW = Math.ceil(worldW / 2);
+    const rtH = Math.ceil(worldH / 2);
+    this.tileLayer            = this.add.renderTexture(0, 0, worldW, worldH).setOrigin(0, 0).setDepth(0);
+    this.biomeTransitionLayer = this.add.renderTexture(0, 0, rtW, rtH).setDepth(0.35).setOrigin(0, 0).setScale(2);
+    this.beachLayer           = this.add.renderTexture(0, 0, rtW, rtH).setDepth(0.42).setOrigin(0, 0).setScale(2);
+    this.riverLayer           = this.add.renderTexture(0, 0, rtW, rtH).setDepth(0.5).setOrigin(0, 0).setScale(2);
+    this.vegetationLayer      = this.add.renderTexture(0, 0, rtW, rtH).setDepth(0.55).setOrigin(0, 0).setScale(2);
+    this.territoryLayer       = this.add.renderTexture(0, 0, rtW, rtH).setDepth(1).setOrigin(0, 0).setScale(2);
 
-    this.renderMap();
+    this.renderTileLayer();
     this.renderBiomeTransitions();
     this.renderBeach();
     this.renderRivers();
@@ -54,12 +63,13 @@ export class MapScene extends Phaser.Scene {
 
     this.scene.launch('UIScene');
 
+    let prevDuchies = useGameStore.getState().allDuchies;
     this.unsubscribeStore = useGameStore.subscribe((state) => {
       const newMap = state.session?.map;
       if (newMap && newMap !== this.world) {
         this.world = newMap;
-        this.tileGroup.clear(true, true);
-        this.renderMap();
+        this.tileLayer.clear();
+        this.renderTileLayer();
         this.renderBiomeTransitions();
         this.renderBeach();
         this.renderRivers();
@@ -77,13 +87,17 @@ export class MapScene extends Phaser.Scene {
       const newSeason = getSeasonIndex(turnNumber);
       if (newSeason !== this.currentSeasonIndex) {
         this.currentSeasonIndex = newSeason;
-        this.updateSeasonTextures();
+        this.renderTileLayer();
         this.renderBiomeTransitions();
         this.renderBeach();
         this.renderVegetation();
+        // Rivers are permanent — no re-bake on season change
       }
 
-      this.renderOverlays(state.allDuchies);
+      if (state.allDuchies !== prevDuchies) {
+        prevDuchies = state.allDuchies;
+        this.renderOverlays(state.allDuchies);
+      }
     });
 
     this.renderOverlays(useGameStore.getState().allDuchies);
@@ -101,46 +115,18 @@ export class MapScene extends Phaser.Scene {
     return `${type}-s${this.currentSeasonIndex}-v${variant}`;
   }
 
-  private renderMap() {
+  /** Bakes all tiles into a single full-res RenderTexture (one draw call per frame). */
+  private renderTileLayer() {
     const { tiles, width, height } = this.world;
+    this.tileLayer.beginDraw();
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
-        const tile: Tile = tiles[y][x];
-        const px = x * TILE_SIZE;
-        const py = y * TILE_SIZE;
-
-        const img = this.add
-          .image(px, py, this.tileKey(tile.type, x, y))
-          .setOrigin(0, 0)
-          .setInteractive();
-
-        // Store coords + type so updateSeasonTextures can find them
-        img.setData('tx', x);
-        img.setData('ty', y);
-        img.setData('tt', tile.type);
-
-        img.on('pointerup', (pointer: Phaser.Input.Pointer) => {
-          if (this.dragMoved) return;
-          const ev = pointer.event as MouseEvent;
-          const el = document.elementFromPoint(ev.clientX, ev.clientY);
-          if (el?.closest('.panel, .hud-bar')) return;
-          useUIStore.getState().setSelectedTile({ x, y });
-        });
-
-        this.tileGroup.add(img);
+        this.tileLayer.batchDrawFrame(
+          this.tileKey(tiles[y][x].type, x, y), undefined, x * TILE_SIZE, y * TILE_SIZE,
+        );
       }
     }
-  }
-
-  /** Swap every tile image to the current season's texture without rebuilding the scene. */
-  private updateSeasonTextures() {
-    for (const child of this.tileGroup.getChildren()) {
-      const img = child as Phaser.GameObjects.Image;
-      const tx = img.getData('tx') as number;
-      const ty = img.getData('ty') as number;
-      const tt = img.getData('tt') as TileType;
-      img.setTexture(this.tileKey(tt, tx, ty));
-    }
+    this.tileLayer.endDraw();
   }
 
   // ─── Biome transition decoration ─────────────────────────────────────────────
@@ -148,7 +134,7 @@ export class MapScene extends Phaser.Scene {
   /** Draws procedural decorations near biome boundaries — a sparse overlay layer
    *  placed between biome tiles (depth 0.35) and rivers (depth 0.5). */
   private renderBiomeTransitions() {
-    this.biomeTransitionLayer.clear();
+    const g = this.make.graphics({}, false);
     const { tiles, width, height } = this.world;
     const season = this.currentSeasonIndex;
     const TS = TILE_SIZE;
@@ -191,19 +177,24 @@ export class MapScene extends Phaser.Scene {
             const px = edgeCX + (-dy) * along - dx * depth;
             const py = edgeCY + ( dx) * along - dy * depth;
 
-            this.drawTransitionDecoration(tile.type, neighbor.type, px, py, rng, season);
+            this.drawTransitionDecoration(g, tile.type, neighbor.type, px, py, rng, season);
           }
         }
       }
     }
+
+    this.biomeTransitionLayer.clear();
+    g.setScale(0.5);
+    this.biomeTransitionLayer.draw(g, 0, 0);
+    g.destroy();
   }
 
   private drawTransitionDecoration(
+    g: Phaser.GameObjects.Graphics,
     fromType: TileType, toType: TileType,
     px: number, py: number,
     rng: () => number, season: number,
   ): void {
-    const g = this.biomeTransitionLayer;
     switch (fromType) {
       case 'forest':
         transitionTree(g, px, py, rng, season);
@@ -230,7 +221,7 @@ export class MapScene extends Phaser.Scene {
   // ─── River rendering ─────────────────────────────────────────────────────────
 
   private renderRivers() {
-    this.riverGraphics.clear();
+    const g = this.make.graphics({}, false);
     const rivers = this.world.rivers ?? [];
     const { tiles } = this.world;
 
@@ -278,28 +269,33 @@ export class MapScene extends Phaser.Scene {
       }
 
       // Outer shadow / glow pass (slightly wider, low alpha)
-      this.riverGraphics.fillStyle(0x2060b0, 0.18);
+      g.fillStyle(0x2060b0, 0.18);
       const shadowPoly = buildWidenedPoly(smooth, MIN_W + 3, MAX_W + 6);
-      this.riverGraphics.fillPoints(shadowPoly, true);
+      g.fillPoints(shadowPoly, true);
 
       // Main body fill
-      this.riverGraphics.fillStyle(0x3a88e0, 0.80);
+      g.fillStyle(0x3a88e0, 0.80);
       const bodyPoly = [...leftPts, ...rightPts.slice().reverse()];
-      this.riverGraphics.fillPoints(bodyPoly, true);
+      g.fillPoints(bodyPoly, true);
 
       // Bright highlight stripe (narrow, centred)
-      this.riverGraphics.lineStyle(1.0, 0x90c8f8, 0.45);
-      this.riverGraphics.beginPath();
-      this.riverGraphics.moveTo(smooth[0].x, smooth[0].y);
-      for (let i = 1; i < n; i++) this.riverGraphics.lineTo(smooth[i].x, smooth[i].y);
-      this.riverGraphics.strokePath();
+      g.lineStyle(1.0, 0x90c8f8, 0.45);
+      g.beginPath();
+      g.moveTo(smooth[0].x, smooth[0].y);
+      for (let i = 1; i < n; i++) g.lineTo(smooth[i].x, smooth[i].y);
+      g.strokePath();
 
       // Delta / harbour fan where the river meets ocean or coast
       const last = river[river.length - 1];
       if (tiles[last.y]?.[last.x]?.type === 'ocean' || tiles[last.y]?.[last.x]?.type === 'coast') {
-        drawRiverDelta(this.riverGraphics, smooth, MAX_W);
+        drawRiverDelta(g, smooth, MAX_W);
       }
     }
+
+    this.riverLayer.clear();
+    g.setScale(0.5);
+    this.riverLayer.draw(g, 0, 0);
+    g.destroy();
   }
 
   // ─── World-space vegetation ───────────────────────────────────────────────────
@@ -307,7 +303,7 @@ export class MapScene extends Phaser.Scene {
   /** Draws large trees in world-space on all forest tiles so they cross tile
    *  boundaries freely, eliminating the visible grid. Redrawn each season. */
   private renderVegetation() {
-    this.vegetationLayer.clear();
+    const g = this.make.graphics({}, false);
     const { tiles, width, height } = this.world;
     const season = this.currentSeasonIndex;
     const palettes = VEG_PALETTES[season];
@@ -331,20 +327,20 @@ export class MapScene extends Phaser.Scene {
           const radius    = 26 + layoutRng() * 22; // 26–48 px
 
           if (isConifer) {
-            vegConifer(this.vegetationLayer, wx, wy, visualRng, season === 3);
+            vegConifer(g, wx, wy, visualRng, season === 3);
           } else if (season === 3) {
-            vegBareTree(this.vegetationLayer, wx, wy, visualRng);
+            vegBareTree(g, wx, wy, visualRng);
           } else {
-            vegBroadleaf(this.vegetationLayer, wx, wy, radius,
-              palettes[palIdx % palettes.length], visualRng);
+            vegBroadleaf(g, wx, wy, radius, palettes[palIdx % palettes.length], visualRng);
           }
         }
       }
     }
 
     // Scatter occasional solitary trees on non-forest tiles
+    // (coast excluded: those tiles now render as shallow water)
     const SCATTER_CHANCE: Partial<Record<string, number>> = {
-      plains: 0.22, coast: 0.10, wetland: 0.14, mountain: 0.05,
+      plains: 0.22, wetland: 0.14, mountain: 0.05,
     };
     for (let ty = 0; ty < height; ty++) {
       for (let tx = 0; tx < width; tx++) {
@@ -364,16 +360,20 @@ export class MapScene extends Phaser.Scene {
           const palIdx    = Math.floor(layoutRng() * 4);
           const radius    = 14 + layoutRng() * 14; // 14–28 px
           if (isConifer) {
-            vegConifer(this.vegetationLayer, wx, wy, visualRng, season === 3);
+            vegConifer(g, wx, wy, visualRng, season === 3);
           } else if (season === 3) {
-            vegBareTree(this.vegetationLayer, wx, wy, visualRng);
+            vegBareTree(g, wx, wy, visualRng);
           } else {
-            vegBroadleaf(this.vegetationLayer, wx, wy, radius,
-              palettes[palIdx % palettes.length], visualRng);
+            vegBroadleaf(g, wx, wy, radius, palettes[palIdx % palettes.length], visualRng);
           }
         }
       }
     }
+
+    this.vegetationLayer.clear();
+    g.setScale(0.5);
+    this.vegetationLayer.draw(g, 0, 0);
+    g.destroy();
   }
 
   // ─── Beach overlay ────────────────────────────────────────────────────────────
@@ -381,7 +381,7 @@ export class MapScene extends Phaser.Scene {
   /** Draws organic beach strips on all coast tiles as a world-space overlay layer
    *  (depth 0.42) so sand bleeds into adjacent land tiles. */
   private renderBeach() {
-    this.beachLayer.clear();
+    const g = this.make.graphics({}, false);
     const { tiles, width, height } = this.world;
     const season = this.currentSeasonIndex;
     const TS = TILE_SIZE;
@@ -416,18 +416,23 @@ export class MapScene extends Phaser.Scene {
 
         const layoutRng = makeRng((tx * 4969 + ty * 3491 + 7) >>> 0);
         drawBeachStrip(
-          this.beachLayer, cx, cy,
+          g, cx, cy,
           snx, sny, alongX, alongY,
           TS, layoutRng, season, hasMountainNeighbor,
         );
       }
     }
+
+    this.beachLayer.clear();
+    g.setScale(0.5);
+    this.beachLayer.draw(g, 0, 0);
+    g.destroy();
   }
 
   // ─── Territory + building overlays ───────────────────────────────────────────
 
   private renderOverlays(allDuchies: Duchy[]) {
-    this.territoryOverlay.clear();
+    const g = this.make.graphics({}, false);
     this.buildingSprites.forEach(s => s.destroy());
     this.buildingSprites = [];
 
@@ -436,62 +441,56 @@ export class MapScene extends Phaser.Scene {
       const ownedSet = new Set(duchy.tiles.map(({ x, y }) => `${x},${y}`));
 
       // Territory fill (semi-transparent)
-      this.territoryOverlay.fillStyle(color, 0.15);
+      g.fillStyle(color, 0.15);
       for (const { x, y } of duchy.tiles) {
-        this.territoryOverlay.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+        g.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
       }
 
       // Territory border
-      this.territoryOverlay.lineStyle(3, color, 1.0);
+      g.lineStyle(3, color, 1.0);
       for (const { x, y } of duchy.tiles) {
         const px = x * TILE_SIZE;
         const py = y * TILE_SIZE;
-        if (!ownedSet.has(`${x},${y - 1}`)) this.territoryOverlay.lineBetween(px, py, px + TILE_SIZE, py);
-        if (!ownedSet.has(`${x},${y + 1}`)) this.territoryOverlay.lineBetween(px, py + TILE_SIZE, px + TILE_SIZE, py + TILE_SIZE);
-        if (!ownedSet.has(`${x - 1},${y}`)) this.territoryOverlay.lineBetween(px, py, px, py + TILE_SIZE);
-        if (!ownedSet.has(`${x + 1},${y}`)) this.territoryOverlay.lineBetween(px + TILE_SIZE, py, px + TILE_SIZE, py + TILE_SIZE);
+        if (!ownedSet.has(`${x},${y - 1}`)) g.lineBetween(px, py, px + TILE_SIZE, py);
+        if (!ownedSet.has(`${x},${y + 1}`)) g.lineBetween(px, py + TILE_SIZE, px + TILE_SIZE, py + TILE_SIZE);
+        if (!ownedSet.has(`${x - 1},${y}`)) g.lineBetween(px, py, px, py + TILE_SIZE);
+        if (!ownedSet.has(`${x + 1},${y}`)) g.lineBetween(px + TILE_SIZE, py, px + TILE_SIZE, py + TILE_SIZE);
       }
 
       // Roads connecting buildings via MST
       if (duchy.buildings.length >= 2) {
         const pts = duchy.buildings.map(b => ({ x: b.tileX, y: b.tileY }));
         const edges = computeMST(pts);
-        this.territoryOverlay.lineStyle(7, 0x7a5828, 0.80);
+        g.lineStyle(7, 0x7a5828, 0.80);
         for (const [a, b] of edges) {
           const ax = (a.x + 0.5) * TILE_SIZE, ay = (a.y + 0.5) * TILE_SIZE;
           const bx = (b.x + 0.5) * TILE_SIZE, by = (b.y + 0.5) * TILE_SIZE;
-          this.territoryOverlay.lineBetween(ax, ay, bx, by);
+          g.lineBetween(ax, ay, bx, by);
         }
         // Thin highlight stripe on roads
-        this.territoryOverlay.lineStyle(2, 0xc0a060, 0.35);
+        g.lineStyle(2, 0xc0a060, 0.35);
         for (const [a, b] of edges) {
           const ax = (a.x + 0.5) * TILE_SIZE, ay = (a.y + 0.5) * TILE_SIZE;
           const bx = (b.x + 0.5) * TILE_SIZE, by = (b.y + 0.5) * TILE_SIZE;
-          this.territoryOverlay.lineBetween(ax, ay, bx, by);
+          g.lineBetween(ax, ay, bx, by);
         }
       }
 
-      // Building sprites — interactive so they relay clicks to their tile
+      // Building sprites — interactive (hover cursor); clicks handled by scene-level handler
       for (const building of duchy.buildings) {
-        const bx = building.tileX;
-        const by = building.tileY;
         const sprite = this.add.image(
-          bx * TILE_SIZE,
-          by * TILE_SIZE,
+          building.tileX * TILE_SIZE,
+          building.tileY * TILE_SIZE,
           `building-${building.type}`,
         ).setOrigin(0, 0).setDepth(2).setInteractive();
-
-        sprite.on('pointerup', (pointer: Phaser.Input.Pointer) => {
-          if (this.dragMoved) return;
-          const ev = pointer.event as MouseEvent;
-          const el = document.elementFromPoint(ev.clientX, ev.clientY);
-          if (el?.closest('.panel, .hud-bar')) return;
-          useUIStore.getState().setSelectedTile({ x: bx, y: by });
-        });
-
         this.buildingSprites.push(sprite);
       }
     }
+
+    this.territoryLayer.clear();
+    g.setScale(0.5);
+    this.territoryLayer.draw(g, 0, 0);
+    g.destroy();
   }
 
   // ─── Camera + input ──────────────────────────────────────────────────────────
@@ -525,7 +524,16 @@ export class MapScene extends Phaser.Scene {
       this.cameras.main.scrollY = this.dragStartY - p.y;
     });
 
-    this.input.on('pointerup', () => { this.isDragging = false; });
+    this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
+      this.isDragging = false;
+      if (this.dragMoved) return;
+      const ev = pointer.event as MouseEvent;
+      if (document.elementFromPoint(ev.clientX, ev.clientY)?.closest('.panel, .hud-bar')) return;
+      const tx = Math.floor(pointer.worldX / TILE_SIZE);
+      const ty = Math.floor(pointer.worldY / TILE_SIZE);
+      if (tx < 0 || ty < 0 || tx >= this.world.width || ty >= this.world.height) return;
+      useUIStore.getState().setSelectedTile({ x: tx, y: ty });
+    });
 
     this.input.on('wheel', (_p: any, _gos: any, _dx: any, dy: number) => {
       const zoom = this.cameras.main.zoom;

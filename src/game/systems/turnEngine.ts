@@ -177,7 +177,7 @@ export function findStartingTile(map: WorldMap): { x: number; y: number } {
         const y = cy + dy;
         if (x < 1 || y < 1 || x >= map.width - 1 || y >= map.height - 1) continue;
         const tile = map.tiles[y][x];
-        if (tile.type === 'plains' || tile.type === 'forest') return { x, y };
+        if (tile.type === 'plains') return { x, y };
       }
     }
   }

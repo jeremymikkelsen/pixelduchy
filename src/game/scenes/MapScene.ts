@@ -317,44 +317,86 @@ export class MapScene extends Phaser.Scene {
   // ─── World-space vegetation ───────────────────────────────────────────────────
 
   /** Draws large trees in world-space on all forest tiles so they cross tile
-   *  boundaries freely, eliminating the visible grid. Redrawn each season. */
+   *  boundaries freely, eliminating the visible grid. Redrawn each season.
+   *  Also draws wetland ponds and skips trees on coast-adjacent tiles. */
   private renderVegetation() {
     const g = this.make.graphics({}, false);
     const { tiles, width, height } = this.world;
     const season = this.currentSeasonIndex;
     const palettes = VEG_PALETTES[season];
+    const TS = TILE_SIZE;
 
+    // ── Wetland ponds (drawn first so trees render on top of pond edges)
+    for (let ty = 0; ty < height; ty++) {
+      for (let tx = 0; tx < width; tx++) {
+        if (tiles[ty][tx].type !== 'wetland') continue;
+        const pondRng = makeRng((tx * 5923 + ty * 6791 + 17) >>> 0);
+        if (pondRng() >= 0.25) continue; // 25% of wetland tiles get a pond
+
+        const px = (tx + 0.12 + pondRng() * 0.76) * TS;
+        const py = (ty + 0.12 + pondRng() * 0.76) * TS;
+        const rx = 22 + pondRng() * 30;
+        const ry = rx * (0.38 + pondRng() * 0.24); // flattened for 3/4 view
+
+        const waterCol = season === 3 ? 0x6898b8 : 0x2a6890;
+        // Shadow
+        g.fillStyle(0x000000, 0.14);
+        g.fillEllipse(px + 2, py + 3, rx * 2.1, ry * 2.1);
+        // Pond body
+        g.fillStyle(waterCol, 0.82);
+        g.fillEllipse(px, py, rx * 2, ry * 2);
+        // Reflection highlight
+        g.fillStyle(season === 3 ? 0x9cc0d8 : 0x60b0d8, 0.38);
+        g.fillEllipse(px - rx * 0.22, py - ry * 0.24, rx * 1.1, ry * 0.65);
+        // Edge reeds
+        const reedCount = 2 + Math.floor(pondRng() * 4);
+        for (let r = 0; r < reedCount; r++) {
+          const ang  = pondRng() * Math.PI * 2;
+          const dist = rx * (0.78 + pondRng() * 0.28);
+          transitionReed(g, px + Math.cos(ang) * dist, py + Math.sin(ang) * (ry / rx) * dist, pondRng, season);
+        }
+      }
+    }
+
+    // Helper: returns true if any 4-directional neighbor is coast or ocean
+    const adjToWater = (tx: number, ty: number): boolean =>
+      [[1,0],[-1,0],[0,1],[0,-1]].some(([dx, dy]) => {
+        const t = tiles[ty + dy]?.[tx + dx];
+        return t?.type === 'coast' || t?.type === 'ocean';
+      });
+
+    // ── Forest trees (dense, bleed slightly across tile boundaries)
     for (let ty = 0; ty < height; ty++) {
       for (let tx = 0; tx < width; tx++) {
         if (tiles[ty][tx].type !== 'forest') continue;
+        if (adjToWater(tx, ty)) continue; // no bleed onto beach
 
-        // Position-stable layout seed — same tree positions every season
         const layoutRng = makeRng((tx * 3571 + ty * 4297 + 13) >>> 0);
-        // Season-dependent visual seed — controls leaf colour, snow etc.
-        const visualRng  = makeRng((tx * 7919 + ty * 6271 + season * 1013) >>> 0);
+        const visualRng = makeRng((tx * 7919 + ty * 6271 + season * 1013) >>> 0);
 
-        const count = 3 + Math.floor(layoutRng() * 3); // 3–5 trees per tile
+        const count = 3 + Math.floor(layoutRng() * 3);
         for (let i = 0; i < count; i++) {
-          // Allow ~8 % bleed beyond each tile edge so canopies cross boundaries
-          const wx = (tx + layoutRng() * 1.08 - 0.04) * TILE_SIZE;
-          const wy = (ty + layoutRng() * 1.08 - 0.04) * TILE_SIZE;
-          const isConifer = layoutRng() < 0.28;
-          const palIdx    = Math.floor(layoutRng() * 4);
-          const radius    = 26 + layoutRng() * 22; // 26–48 px
+          const wx = (tx + layoutRng() * 1.08 - 0.04) * TS;
+          const wy = (ty + layoutRng() * 1.08 - 0.04) * TS;
+          // Extra safety: skip if this pixel falls on coast/ocean tile
+          const wtx = Math.floor(wx / TS), wty = Math.floor(wy / TS);
+          const wType = tiles[wty]?.[wtx]?.type;
+          if (wType === 'coast' || wType === 'ocean') continue;
 
+          const isConifer = layoutRng() < 0.28;
+          const radius    = 26 + layoutRng() * 22;
           if (isConifer) {
             vegConifer(g, wx, wy, visualRng, season === 3);
           } else if (season === 3) {
             vegBareTree(g, wx, wy, visualRng);
           } else {
-            vegBroadleaf(g, wx, wy, radius, palettes[palIdx % palettes.length], visualRng);
+            vegBroadleaf(g, wx, wy, radius, palettes[Math.floor(layoutRng() * 4) % palettes.length], visualRng);
           }
         }
       }
     }
 
-    // Scatter occasional solitary trees on non-forest tiles
-    // (coast excluded: those tiles now render as shallow water)
+    // ── Scatter solitary trees on non-forest tiles (coast and ocean excluded)
     const SCATTER_CHANCE: Partial<Record<string, number>> = {
       plains: 0.22, wetland: 0.14, mountain: 0.05,
     };
@@ -363,6 +405,7 @@ export class MapScene extends Phaser.Scene {
         const tileType = tiles[ty][tx].type;
         const chance = SCATTER_CHANCE[tileType];
         if (!chance) continue;
+        if (adjToWater(tx, ty)) continue; // keep trees off coast-adjacent tiles
 
         const layoutRng = makeRng((tx * 5003 + ty * 6661 + 99) >>> 0);
         if (layoutRng() >= chance) continue;
@@ -370,17 +413,16 @@ export class MapScene extends Phaser.Scene {
         const visualRng = makeRng((tx * 8191 + ty * 5749 + season * 997) >>> 0);
         const count = 1 + Math.floor(layoutRng() * (tileType === 'plains' ? 2 : 1));
         for (let i = 0; i < count; i++) {
-          const wx = (tx + 0.05 + layoutRng() * 0.90) * TILE_SIZE;
-          const wy = (ty + 0.05 + layoutRng() * 0.90) * TILE_SIZE;
+          const wx = (tx + 0.05 + layoutRng() * 0.90) * TS;
+          const wy = (ty + 0.05 + layoutRng() * 0.90) * TS;
           const isConifer = tileType === 'mountain' || layoutRng() < 0.25;
-          const palIdx    = Math.floor(layoutRng() * 4);
-          const radius    = 14 + layoutRng() * 14; // 14–28 px
+          const radius    = 14 + layoutRng() * 14;
           if (isConifer) {
             vegConifer(g, wx, wy, visualRng, season === 3);
           } else if (season === 3) {
             vegBareTree(g, wx, wy, visualRng);
           } else {
-            vegBroadleaf(g, wx, wy, radius, palettes[palIdx % palettes.length], visualRng);
+            vegBroadleaf(g, wx, wy, radius, palettes[Math.floor(layoutRng() * 4) % palettes.length], visualRng);
           }
         }
       }
@@ -404,8 +446,9 @@ export class MapScene extends Phaser.Scene {
 
     for (const cluster of clusters) {
       // Main peak dimensions scale with cluster size.
-      const mainH  = Math.min(70 + cluster.size * 7, 320);
-      const mainBW = mainH * 1.45;
+      // Minimum height is substantial even for a single tile so peaks are always visible.
+      const mainH  = Math.min(140 + cluster.size * 9, 380);
+      const mainBW = mainH * 1.85;
 
       // Build fast sets to identify summit tiles.
       const summitSet = new Set<string>([
@@ -436,8 +479,9 @@ export class MapScene extends Phaser.Scene {
       for (const pt of hillTiles.sort((a, b) => a.y - b.y)) {
         const depth = cluster.interiorDepth.get(`${pt.x},${pt.y}`) ?? 0;
         const df    = cluster.maxDepth > 0 ? depth / cluster.maxDepth : 0;
-        const h = 32 + df * 58;  // 32–90 px — hills get taller toward the interior
-        const w = 55 + df * 65;  // 55–120 px half-width
+        // Hills are large so they overlap adjacent tiles and flow together like beaches/trees.
+        const h = 48 + df * 90;           // 48–138 px
+        const w = 110 + df * 220;         // 110–330 px half-width (≈ 1–2.6 tile radii)
         const cx = pt.x * TILE_SIZE + TILE_SIZE / 2;
         const cy = pt.y * TILE_SIZE + TILE_SIZE / 2;
         const rng = makeRng((pt.x * 7919 + pt.y * 6271 + 11) >>> 0);
@@ -1305,9 +1349,10 @@ function computeMountainClusters(
 
 // ─── 3D mountain peak drawing ─────────────────────────────────────────────────
 
-/** Draws a single mountain peak centered at (cx, cy) in world pixels.
- *  h = height of peak above the tile center, baseW = half-width at base.
- *  Uses a two-face 3/4-projection pyramid with rocky texture, snow cap, and cracks. */
+/** Draws a single mountain peak in 3/4 top-down view.
+ *  Pentagon silhouette with shoulder points (wider at mid-height than at base),
+ *  unified south-facing slope with gradient overlays, snow cap, and crevice lines.
+ *  h = screen-pixel height, baseW = half-width at base. */
 function drawMountainPeak(
   g: Phaser.GameObjects.Graphics,
   cx: number, cy: number,
@@ -1319,103 +1364,135 @@ function drawMountainPeak(
 ): void {
   if (h < 22) return;
 
-  const baseH = TILE_SIZE * 0.15;              // how far base drops below tile center
-  const tipY  = cy - h;
-  const leftX = cx - baseW;
-  const rightX = cx + baseW;
+  const baseH  = TILE_SIZE * 0.22;
+  const tipY   = cy - h;
   const baseY  = cy + baseH;
 
-  // Drop shadow
-  g.fillStyle(0x000000, 0.10);
-  g.fillEllipse(cx + baseW * 0.12, baseY + 5, baseW * 2.2, baseH * 2.0);
+  // Shoulders bow outward at ~38% of the way from tip to base.
+  // This gives the characteristic 3/4 "diamond" outline instead of a flat triangle.
+  const shT  = 0.38;
+  const shY  = tipY + (baseY - tipY) * shT;
+  const shW  = baseW * 1.10;
 
-  // Left face — sun-lit (cooler grey in winter, warm stone otherwise)
-  g.fillStyle(season === 3 ? 0x9898b0 : 0x907a60, 1.0);
-  g.fillTriangle(cx, tipY, leftX, baseY, cx, baseY);
+  const peak  = { x: cx,         y: tipY };
+  const shR   = { x: cx + shW,   y: shY  };
+  const baseR = { x: cx + baseW, y: baseY };
+  const baseL = { x: cx - baseW, y: baseY };
+  const shL   = { x: cx - shW,   y: shY  };
 
-  // Highlight on upper-left portion of left face (sun angle)
-  g.fillStyle(season === 3 ? 0xb8b8d0 : 0xb09878, 0.36);
-  const hlY = tipY + (baseY - tipY) * 0.55;
-  g.fillTriangle(cx, tipY, leftX, hlY, cx, hlY);
+  // ── Ground shadow
+  g.fillStyle(0x000000, 0.16);
+  g.fillEllipse(cx + baseW * 0.07, baseY + 9, baseW * 2.8, baseH * 3.4);
 
-  // Right face — in shadow
-  g.fillStyle(season === 3 ? 0x606070 : 0x584840, 1.0);
-  g.fillTriangle(cx, tipY, cx, baseY, rightX, baseY);
+  // ── Full mountain body — dark rock base (entire pentagon, back-most layer)
+  const bodyDark = season === 3 ? 0x484e5a : 0x352a20;
+  g.fillStyle(bodyDark, 1.0);
+  g.fillPoints([peak, shR, baseR, baseL, shL], true);
 
-  // Rocky facet patches (ellipses scattered across both faces)
-  const facetColor = season === 3 ? 0xb0b0c4 : 0xa89070;
-  for (let i = 0; i < 3 + Math.floor(rng() * 3); i++) {
-    const t  = rng();
-    const sx = rng() > 0.5 ? -1 : 1;
-    const fx = cx + sx * baseW * t * 0.58 + (rng() - 0.5) * 16;
+  // ── Lit left slope (sun from upper-left in 3/4 view)
+  const litSlope = season === 3 ? 0x70788a : 0x685848;
+  g.fillStyle(litSlope, 1.0);
+  g.fillPoints([peak, shL, baseL, { x: cx - baseW * 0.06, y: baseY }], true);
+
+  // ── Upper-peak "top face" — the surface glimpsed from above near the summit.
+  // This gradient overlay is the key 3/4 cue: it implies the viewer is above the peak.
+  const topFace = season === 3 ? 0x8890a4 : 0x80684e;
+  g.fillStyle(topFace, 0.72);
+  g.fillPoints([
+    peak,
+    { x: cx - shW * 0.62, y: shY * 0.52 + tipY * 0.48 },
+    { x: cx - shW * 0.14, y: tipY + (baseY - tipY) * 0.55 },
+    { x: cx + shW * 0.10, y: tipY + (baseY - tipY) * 0.38 },
+  ], true);
+
+  // ── Specular glint at summit (bright spot where light hits directly)
+  g.fillStyle(season === 3 ? 0xb8c8d8 : 0xb09a80, 0.32);
+  g.fillCircle(cx - baseW * 0.05, tipY + h * 0.07, baseW * 0.13);
+
+  // ── Rocky facets (elongated ellipses across the slope)
+  const facetC = season === 3 ? 0x8090a2 : 0x7e6c56;
+  for (let i = 0; i < 5 + Math.floor(rng() * 5); i++) {
+    const t  = 0.15 + rng() * 0.68;
+    const sx = rng() > 0.40 ? -1 : 1;
+    const fx = cx + sx * shW * t * 0.60 + (rng() - 0.5) * 18;
     const fy = tipY + (baseY - tipY) * t;
-    const fr = 5 + rng() * 12;
-    g.fillStyle(facetColor, 0.30);
-    g.fillEllipse(fx, fy, fr * 2.0, fr * 0.85);
+    const fr = 5 + rng() * 13;
+    g.fillStyle(facetC, 0.24);
+    g.fillEllipse(fx, fy, fr * 2.6, fr * 0.75);
   }
 
-  // Snow cap — fraction varies by tier and season
+  // ── Crevice lines — diagonal, running from upper slope down toward base corners
+  g.lineStyle(0.8, 0x1a1410, 0.44);
+  for (let i = 0; i < 5 + Math.floor(rng() * 6); i++) {
+    const t   = 0.08 + rng() * 0.56;
+    const sx  = rng() > 0.5 ? -1 : 1;
+    const lx0 = cx + sx * shW * t * 0.54 + (rng() - 0.5) * 14;
+    const ly0 = tipY + (baseY - tipY) * t;
+    const len = 15 + rng() * 34;
+    const ang = (rng() - 0.5) * 0.68;
+    g.lineBetween(
+      lx0, ly0,
+      lx0 + Math.sin(ang) * len * sx,
+      ly0 + Math.cos(Math.abs(ang) * 0.5 + 0.5) * len,
+    );
+  }
+
+  // ── Snow cap (asymmetric blob, heavier on lit/left side)
   let snowFrac = 0;
-  if      (tier === 2)                 snowFrac = 0.36;  // always capped (tall peaks)
-  else if (tier === 1 && season === 0) snowFrac = 0.20;  // spring: medium peaks
-  else if (tier === 1 && season === 3) snowFrac = 0.28;  // winter: medium peaks
-  else if (season === 3)               snowFrac = 0.16;  // winter: all mountains
+  if      (tier === 2)                 snowFrac = 0.34;
+  else if (tier === 1 && season === 0) snowFrac = 0.19;
+  else if (tier === 1 && season === 3) snowFrac = 0.26;
+  else if (season === 3)               snowFrac = 0.14;
 
   if (snowFrac > 0) {
-    const sd  = h * snowFrac;           // snow depth in px
-    const sbY = tipY + sd;             // y at snow base
-    const sw  = baseW * snowFrac;      // half-width of snow base
-
-    // Main snow body
+    const sd  = h * snowFrac;
+    const sbY = tipY + sd;
+    const sw  = baseW * snowFrac * 1.18;
+    // Main snow — left-heavy blob
     g.fillStyle(0xdce8ff, 0.95);
-    g.fillTriangle(cx, tipY, cx - sw, sbY, cx + sw, sbY);
-    // Bright highlight (upper-left)
-    g.fillStyle(0xf4f8ff, 0.58);
-    g.fillTriangle(cx, tipY, cx - sw * 0.52, tipY + sd * 0.56, cx + sw * 0.08, tipY + sd * 0.40);
-    // Cool blue shadow (right side)
-    g.fillStyle(0x8ab4d8, 0.20);
-    g.fillTriangle(cx + sw * 0.06, tipY + sd * 0.12, cx + sw, sbY, cx - sw * 0.08, sbY);
-    // Snow edge line
-    g.lineStyle(0.8, 0xc0d8f8, 0.65);
+    g.fillPoints([
+      peak,
+      { x: cx - sw * 1.18, y: sbY },
+      { x: cx - sw * 0.20, y: sbY + sd * 0.12 },
+      { x: cx + sw * 0.88, y: sbY },
+    ], true);
+    // Bright highlight
+    g.fillStyle(0xf4f8ff, 0.60);
+    g.fillPoints([
+      peak,
+      { x: cx - sw * 0.65, y: tipY + sd * 0.52 },
+      { x: cx - sw * 0.05, y: tipY + sd * 0.36 },
+    ], true);
+    // Cool-blue shadow on right side of snow
+    g.fillStyle(0x8ab4d8, 0.22);
+    g.fillPoints([
+      { x: cx + sw * 0.08, y: tipY + sd * 0.16 },
+      { x: cx + sw * 0.88, y: sbY },
+      { x: cx - sw * 0.20, y: sbY + sd * 0.12 },
+      { x: cx, y: tipY + sd * 0.65 },
+    ], true);
+    g.lineStyle(0.8, 0xc0d8f8, 0.62);
     g.beginPath();
-    g.moveTo(cx - sw, sbY);
+    g.moveTo(cx - sw * 1.18, sbY);
     g.lineTo(cx, tipY);
-    g.lineTo(cx + sw, sbY);
+    g.lineTo(cx + sw * 0.88, sbY);
     g.strokePath();
   }
 
-  // Crack / crevice lines across both faces
-  g.lineStyle(0.7, 0x1c1610, 0.38);
-  for (let i = 0; i < 3 + Math.floor(rng() * 4); i++) {
-    const t   = 0.12 + rng() * 0.76;
-    const sx  = rng() > 0.5 ? -1 : 1;
-    const crX = cx + sx * baseW * t * 0.52 + (rng() - 0.5) * 12;
-    const crY = tipY + (baseY - tipY) * t;
-    const len = 10 + rng() * 22;
-    const ang = (rng() - 0.5) * 0.9;
-    g.lineBetween(crX, crY,
-      crX + Math.sin(ang) * len,
-      crY + Math.cos(Math.abs(ang) * 0.5 + 0.5) * len);
-  }
+  // ── Silhouette outline
+  g.lineStyle(1.6, 0x181210, 0.72);
+  g.strokePoints([peak, shR, baseR, baseL, shL], true);
 
-  // Silhouette outline (left edge → peak → right edge)
-  g.lineStyle(1.2, 0x181410, 0.62);
-  g.beginPath();
-  g.moveTo(leftX, baseY);
-  g.lineTo(cx, tipY);
-  g.lineTo(rightX, baseY);
-  g.strokePath();
-
-  // Centre ridge line separating left and right faces
-  g.lineStyle(0.6, 0x201810, 0.48);
+  // ── Centre ridge line
+  g.lineStyle(0.7, 0x201810, 0.42);
   g.lineBetween(cx, tipY, cx, baseY);
 }
 
 // ─── Grass hill drawing ───────────────────────────────────────────────────────
 
-/** Draws a rounded grassy hill as a filled semi-ellipse.
- *  cx/cy = world-pixel center, h = height above cy, w = half-width.
- *  Hills get taller and wider toward the cluster interior. May have a tree. */
+/** Draws a grassy hill in 3/4 top-down view: a large flattened oval (the visible
+ *  top surface), with a south-edge shadow crescent for depth. Hills are big enough
+ *  to overlap adjacent tiles so they flow into one another like beaches and trees. */
 function drawHill(
   g: Phaser.GameObjects.Graphics,
   cx: number, cy: number,
@@ -1424,79 +1501,65 @@ function drawHill(
   season: number,
   rng: () => number,
 ): void {
-  if (h < 12) return;
+  if (h < 15) return;
 
-  const N = 18;
-  // Semi-ellipse arc from angle π → 0 (left base → top → right base)
-  const dome: { x: number; y: number }[] = [];
-  for (let i = 0; i <= N; i++) {
-    const a = Math.PI * (1 - i / N);
-    dome.push({ x: cx + Math.cos(a) * w, y: cy - Math.sin(a) * h });
-  }
+  // In 3/4 view the top surface of the hill is visible as a flattened oval.
+  // Pull the oval center slightly north (up in screen) of the tile centre so
+  // the south-facing slope is visible below it.
+  const ovalCY = cy - h * 0.30;
+  const ovalRX = w;               // east-west half-radius
+  const ovalRY = h * 0.55;       // north-south half-radius (foreshortened)
 
-  // Drop shadow
-  g.fillStyle(0x000000, 0.12);
-  g.fillEllipse(cx + w * 0.08, cy + h * 0.10 + 5, w * 2.1, h * 0.32);
-
-  // Hill body
-  const grassBase = season === 3 ? 0x607060 : season === 2 ? 0x6a8a30 : 0x4e8838;
-  g.fillStyle(grassBase, 0.92);
-  g.fillPoints(dome, true);
-
-  // Lit highlight on upper-left
-  const hiPts: { x: number; y: number }[] = [];
-  const hiEnd = Math.ceil(N * 0.55);
-  for (let i = 0; i <= hiEnd; i++) {
-    const a = Math.PI * (1 - i / N);
-    hiPts.push({ x: cx + Math.cos(a) * w * 0.78, y: cy - Math.sin(a) * h * 0.78 });
-  }
-  hiPts.push({ x: cx, y: cy - h });
-  const grassHi = season === 3 ? 0x88a080 : season === 2 ? 0x90b048 : 0x72b84a;
-  g.fillStyle(grassHi, 0.34);
-  g.fillPoints(hiPts, true);
-
-  // Shadow on right flank
-  const shPts: { x: number; y: number }[] = [];
-  shPts.push({ x: cx, y: cy });
-  for (let i = Math.floor(N / 2); i <= N; i++) {
-    const a = Math.PI * (1 - i / N);
-    shPts.push({ x: cx + Math.cos(a) * w, y: cy - Math.sin(a) * h });
-  }
+  // ── Drop shadow
   g.fillStyle(0x000000, 0.11);
-  g.fillPoints(shPts, true);
+  g.fillEllipse(cx + ovalRX * 0.06, ovalCY + ovalRY + 6, ovalRX * 2.15, ovalRY * 0.48);
 
-  // Winter snow dusting on taller hills
-  if (season === 3 && h > 55) {
-    const snowRatio = Math.min(0.44, (h - 55) / 130);
-    const snowCutY = cy - h * (1 - snowRatio);
-    const snowPts: { x: number; y: number }[] = [];
-    for (let i = 0; i <= N; i++) {
-      const a = Math.PI * (1 - i / N);
-      const px = cx + Math.cos(a) * w;
-      const py = cy - Math.sin(a) * h;
-      if (py <= snowCutY + 4) snowPts.push({ x: px, y: py });
-    }
-    if (snowPts.length > 2) {
-      snowPts.push({ x: snowPts[snowPts.length - 1].x, y: snowCutY });
-      snowPts.unshift({ x: snowPts[0].x, y: snowCutY });
-      g.fillStyle(0xdce8ff, 0.70);
-      g.fillPoints(snowPts, true);
-    }
+  // ── Main top surface
+  const col = season === 3 ? 0x607060 : season === 2 ? 0x6a8a30 : 0x4e8838;
+  g.fillStyle(col, 0.90);
+  g.fillEllipse(cx, ovalCY, ovalRX * 2, ovalRY * 2);
+
+  // ── Lit highlight (NW portion of the oval — sun from upper-left)
+  const hiCol = season === 3 ? 0x88a080 : season === 2 ? 0x90b048 : 0x72b84a;
+  g.fillStyle(hiCol, 0.36);
+  g.fillEllipse(cx - ovalRX * 0.22, ovalCY - ovalRY * 0.24, ovalRX * 1.35, ovalRY * 1.15);
+
+  // ── South-slope shadow crescent (bottom half of a slightly offset oval)
+  // Achieved by filling the lower-semicircle of the main oval with a dark tint.
+  const shadowN = 14;
+  const shadowPts: { x: number; y: number }[] = [];
+  for (let i = 0; i <= shadowN; i++) {
+    const a = Math.PI * i / shadowN; // 0 → π: right edge → bottom → left edge
+    shadowPts.push({ x: cx + Math.cos(a) * ovalRX, y: ovalCY + Math.sin(a) * ovalRY });
+  }
+  // fillPoints closes from last point back to first → forms a D-shape facing south
+  g.fillStyle(0x000000, 0.16);
+  g.fillPoints(shadowPts, true);
+
+  // ── Winter snow dusting on taller hills
+  if (season === 3 && h > 52) {
+    const sr = Math.min(0.52, (h - 52) / 120);
+    g.fillStyle(0xdce8ff, 0.65);
+    g.fillEllipse(
+      cx - ovalRX * 0.04,
+      ovalCY - ovalRY * (0.82 - sr * 0.35),
+      ovalRX * 1.4 * sr,
+      ovalRY * 1.0 * sr,
+    );
   }
 
-  // Optional tree on dome surface
-  if (h > 42 && rng() < 0.30) {
-    const treeX = cx + (rng() - 0.5) * w * 0.52;
-    const tOffset = Math.max(-0.98, Math.min(0.98, (treeX - cx) / (w || 1)));
-    const treeY = cy - Math.sqrt(1 - tOffset * tOffset) * h * 0.76 - 10;
+  // ── Optional tree on top of hill (placed on the visible oval surface)
+  if (h > 48 && rng() < 0.28) {
+    const treeX = cx + (rng() - 0.5) * ovalRX * 0.52;
+    const t     = (treeX - cx) / (ovalRX || 1);
+    const treeY = ovalCY - ovalRY * Math.sqrt(Math.max(0, 1 - t * t)) * 0.70 - 9;
     if (rng() < 0.42) {
       vegConifer(g, treeX, treeY, rng, season === 3);
     } else if (season === 3) {
       vegBareTree(g, treeX, treeY, rng);
     } else {
       const palettes = VEG_PALETTES[season];
-      const palIdx = Math.floor(rng() * 4) % palettes.length;
-      vegBroadleaf(g, treeX, treeY, 16 + rng() * 14, palettes[palIdx], rng);
+      vegBroadleaf(g, treeX, treeY, 16 + rng() * 14, palettes[Math.floor(rng() * 4) % palettes.length], rng);
     }
   }
 }

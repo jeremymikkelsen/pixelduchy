@@ -63,7 +63,7 @@ function classifyTile(elevation: number, moisture: number, distToEdge: number): 
   if (e < 0.25) return 'ocean';    // covers distToEdge ≤ ~0.22 → always ocean
   if (e < 0.34) return 'coast';
   if (elevation > 0.72) return 'mountain'; // raw-elevation threshold (no falloff adjustment needed)
-  if (moisture > 0.65) return 'wetland';
+  if (moisture > 0.74) return 'wetland';
   if (moisture > 0.45) return 'forest';
   if (moisture < 0.25) return 'desert';
   return 'plains';

@@ -3,7 +3,7 @@ import { generateWorld } from '../procgen/worldgen';
 import { useUIStore } from '../../store/uiStore';
 import { useGameStore } from '../../store/gameStore';
 import { TILE_SIZE, NUM_TILE_VARIANTS, getSeasonIndex } from '../procgen/tileRenderer';
-import type { WorldMap, Duchy, TileType } from '../../types';
+import type { WorldMap, Tile, Duchy, TileType } from '../../types';
 
 // ─── Mountain cluster data (computed from tiles at render time) ────────────────
 interface MountainCluster {
@@ -11,7 +11,9 @@ interface MountainCluster {
   interiorDepth: Map<string, number>;
   maxDepth: number;
   size: number;
-  tier: 0 | 1 | 2;  // 0=small(1-5), 1=medium(6-13), 2=tall(14+)
+  tier: 0 | 1 | 2;          // 0=small(1-8), 1=medium(9-24), 2=tall(25+)
+  mainSummit: { x: number; y: number };
+  secondarySummits: { x: number; y: number }[];
 }
 
 /**
@@ -393,25 +395,71 @@ export class MapScene extends Phaser.Scene {
   // ─── Mountain peaks ───────────────────────────────────────────────────────────
 
   /** Bakes 3D mountain peaks as a world-space overlay (depth 0.60).
-   *  Peak height and snow cap vary by cluster size and season. */
+   *  Hierarchical: grass hills → secondary peaks → one main summit per cluster. */
   private renderMountains() {
     const g = this.make.graphics({}, false);
     const { tiles, width, height } = this.world;
     const clusters = computeMountainClusters(tiles, width, height);
+    const season = this.currentSeasonIndex;
 
     for (const cluster of clusters) {
-      // Draw back-to-front (northernmost tile first) for painter's algorithm.
-      const sorted = [...cluster.tiles].sort((a, b) => a.y !== b.y ? a.y - b.y : a.x - b.x);
-      for (const { x: tx, y: ty } of sorted) {
-        const interior    = cluster.interiorDepth.get(`${tx},${ty}`) ?? 0;
-        const depthFactor = cluster.maxDepth > 0 ? interior / cluster.maxDepth : 0;
-        // Edge tiles get ~55% of the base height; interior peaks get up to 100%.
-        const baseH  = Math.min(55 + cluster.size * 12, 190);
-        const peakH  = baseH * (0.55 + 0.45 * depthFactor);
-        const cx = tx * TILE_SIZE + TILE_SIZE / 2;
-        const cy = ty * TILE_SIZE + TILE_SIZE / 2;
-        const rng = makeRng((tx * 7919 + ty * 6271 + 99) >>> 0);
-        drawMountainPeak(g, cx, cy, peakH, cluster.tier, this.currentSeasonIndex, rng);
+      // Main peak dimensions scale with cluster size.
+      const mainH  = Math.min(70 + cluster.size * 7, 320);
+      const mainBW = mainH * 1.45;
+
+      // Build fast sets to identify summit tiles.
+      const summitSet = new Set<string>([
+        `${cluster.mainSummit.x},${cluster.mainSummit.y}`,
+        ...cluster.secondarySummits.map(s => `${s.x},${s.y}`),
+      ]);
+
+      // Separate cluster tiles into cliff edges, hills, and non-summit interiors.
+      const cliffTiles: { x: number; y: number }[] = [];
+      const hillTiles:  { x: number; y: number }[] = [];
+      for (const pt of cluster.tiles) {
+        if (summitSet.has(`${pt.x},${pt.y}`)) continue;
+        const adjacentToWater = [[-1,0],[1,0],[0,-1],[0,1]].some(([dx, dy]) => {
+          const t = tiles[pt.y + dy]?.[pt.x + dx];
+          return t?.type === 'ocean' || t?.type === 'coast';
+        });
+        if (adjacentToWater) cliffTiles.push(pt);
+        else hillTiles.push(pt);
+      }
+
+      // 1. Cliffs (back-to-front) — mountain tiles touching water.
+      for (const pt of cliffTiles.sort((a, b) => a.y - b.y)) {
+        const rng = makeRng((pt.x * 7919 + pt.y * 6271 + 7) >>> 0);
+        drawCliffFace(g, pt.x, pt.y, tiles, width, height, season, rng);
+      }
+
+      // 2. Grass hills (back-to-front) — non-summit interior and edge tiles.
+      for (const pt of hillTiles.sort((a, b) => a.y - b.y)) {
+        const depth = cluster.interiorDepth.get(`${pt.x},${pt.y}`) ?? 0;
+        const df    = cluster.maxDepth > 0 ? depth / cluster.maxDepth : 0;
+        const h = 32 + df * 58;  // 32–90 px — hills get taller toward the interior
+        const w = 55 + df * 65;  // 55–120 px half-width
+        const cx = pt.x * TILE_SIZE + TILE_SIZE / 2;
+        const cy = pt.y * TILE_SIZE + TILE_SIZE / 2;
+        const rng = makeRng((pt.x * 7919 + pt.y * 6271 + 11) >>> 0);
+        drawHill(g, cx, cy, h, w, season, rng);
+      }
+
+      // 3. Secondary summits (back-to-front, smaller triangle peaks).
+      for (const s of [...cluster.secondarySummits].sort((a, b) => a.y - b.y)) {
+        const h  = mainH * 0.62;
+        const bw = mainBW * 0.62;
+        const cx = s.x * TILE_SIZE + TILE_SIZE / 2;
+        const cy = s.y * TILE_SIZE + TILE_SIZE / 2;
+        const rng = makeRng((s.x * 7919 + s.y * 6271 + 55) >>> 0);
+        drawMountainPeak(g, cx, cy, h, bw, cluster.tier, season, rng);
+      }
+
+      // 4. Main summit — always drawn last so it dominates over everything nearby.
+      {
+        const cx  = cluster.mainSummit.x * TILE_SIZE + TILE_SIZE / 2;
+        const cy  = cluster.mainSummit.y * TILE_SIZE + TILE_SIZE / 2;
+        const rng = makeRng((cluster.mainSummit.x * 7919 + cluster.mainSummit.y * 6271 + 99) >>> 0);
+        drawMountainPeak(g, cx, cy, mainH, mainBW, cluster.tier, season, rng);
       }
     }
 
@@ -1149,10 +1197,10 @@ function drawRockyCoast(
 
 // ─── Mountain cluster analysis ────────────────────────────────────────────────
 
-/** Finds connected components of mountain tiles and computes interior depth
- *  (BFS distance from the cluster edge) for each tile. */
+/** Finds connected components of mountain tiles, computes interior depth,
+ *  and locates the main summit (highest elevation) plus secondary summits. */
 function computeMountainClusters(
-  tiles: { type: string }[][],
+  tiles: Tile[][],
   width: number,
   height: number,
 ): MountainCluster[] {
@@ -1164,11 +1212,10 @@ function computeMountainClusters(
     for (let x = 0; x < width; x++) {
       if (tiles[y][x].type !== 'mountain' || visited[y * width + x]) continue;
 
-      // BFS flood-fill to collect the connected component.
+      // BFS flood-fill: collect the connected component.
       const queue: { x: number; y: number }[] = [{ x, y }];
       const clusterTiles: { x: number; y: number }[] = [];
       visited[y * width + x] = 1;
-
       while (queue.length) {
         const pt = queue.shift()!;
         clusterTiles.push(pt);
@@ -1181,13 +1228,11 @@ function computeMountainClusters(
         }
       }
 
-      // Build a fast lookup set for this cluster.
       const clusterSet = new Set(clusterTiles.map(t => `${t.x},${t.y}`));
 
-      // BFS inward from edge tiles to compute interior depth.
+      // BFS inward from edge tiles → interior depth per tile.
       const interiorDepth = new Map<string, number>();
       const iqueue: { x: number; y: number; d: number }[] = [];
-
       for (const pt of clusterTiles) {
         const isEdge = DIRS.some(([dx, dy]) => {
           const nx = pt.x + dx, ny = pt.y + dy;
@@ -1199,7 +1244,6 @@ function computeMountainClusters(
           iqueue.push({ x: pt.x, y: pt.y, d: 0 });
         }
       }
-
       while (iqueue.length) {
         const { x: tx, y: ty, d } = iqueue.shift()!;
         for (const [dx, dy] of DIRS) {
@@ -1216,9 +1260,43 @@ function computeMountainClusters(
         (m, t) => Math.max(m, interiorDepth.get(`${t.x},${t.y}`) ?? 0), 0,
       );
       const size = clusterTiles.length;
-      const tier: 0 | 1 | 2 = size >= 14 ? 2 : size >= 6 ? 1 : 0;
+      const tier: 0 | 1 | 2 = size >= 25 ? 2 : size >= 9 ? 1 : 0;
 
-      clusters.push({ tiles: clusterTiles, interiorDepth, maxDepth, size, tier });
+      // ── Find main summit: tile with highest elevation, biased toward interior.
+      let mainSummit = clusterTiles[0];
+      let bestScore  = -Infinity;
+      for (const pt of clusterTiles) {
+        const elev   = tiles[pt.y][pt.x].elevation;
+        const depth  = interiorDepth.get(`${pt.x},${pt.y}`) ?? 0;
+        const score  = elev + depth * 0.08;  // slight interior bonus
+        if (score > bestScore) { bestScore = score; mainSummit = pt; }
+      }
+
+      // ── Find secondary summits: well-interior tiles spaced from each other.
+      const maxSecondary = Math.min(4, Math.floor(Math.sqrt(size / 6)));
+      const secondarySummits: { x: number; y: number }[] = [];
+      const minSpacing = Math.max(4, Math.ceil(Math.sqrt(size) * 0.55));
+
+      const candidates = clusterTiles
+        .filter(pt => {
+          if (`${pt.x},${pt.y}` === `${mainSummit.x},${mainSummit.y}`) return false;
+          const depth = interiorDepth.get(`${pt.x},${pt.y}`) ?? 0;
+          if (depth < Math.max(1, maxDepth * 0.35)) return false;
+          const dx = pt.x - mainSummit.x, dy = pt.y - mainSummit.y;
+          return Math.sqrt(dx * dx + dy * dy) >= minSpacing;
+        })
+        .sort((a, b) => tiles[b.y][b.x].elevation - tiles[a.y][a.x].elevation);
+
+      for (const pt of candidates) {
+        if (secondarySummits.length >= maxSecondary) break;
+        const tooClose = secondarySummits.some(s => {
+          const dx = s.x - pt.x, dy = s.y - pt.y;
+          return Math.sqrt(dx * dx + dy * dy) < minSpacing;
+        });
+        if (!tooClose) secondarySummits.push(pt);
+      }
+
+      clusters.push({ tiles: clusterTiles, interiorDepth, maxDepth, size, tier, mainSummit, secondarySummits });
     }
   }
 
@@ -1228,19 +1306,19 @@ function computeMountainClusters(
 // ─── 3D mountain peak drawing ─────────────────────────────────────────────────
 
 /** Draws a single mountain peak centered at (cx, cy) in world pixels.
- *  h = height of peak above the tile center.
+ *  h = height of peak above the tile center, baseW = half-width at base.
  *  Uses a two-face 3/4-projection pyramid with rocky texture, snow cap, and cracks. */
 function drawMountainPeak(
   g: Phaser.GameObjects.Graphics,
   cx: number, cy: number,
   h: number,
+  baseW: number,
   tier: 0 | 1 | 2,
   season: number,
   rng: () => number,
 ): void {
   if (h < 22) return;
 
-  const baseW = TILE_SIZE * 0.50 + h * 0.22;  // half-width at base
   const baseH = TILE_SIZE * 0.15;              // how far base drops below tile center
   const tipY  = cy - h;
   const leftX = cx - baseW;
@@ -1331,4 +1409,190 @@ function drawMountainPeak(
   // Centre ridge line separating left and right faces
   g.lineStyle(0.6, 0x201810, 0.48);
   g.lineBetween(cx, tipY, cx, baseY);
+}
+
+// ─── Grass hill drawing ───────────────────────────────────────────────────────
+
+/** Draws a rounded grassy hill as a filled semi-ellipse.
+ *  cx/cy = world-pixel center, h = height above cy, w = half-width.
+ *  Hills get taller and wider toward the cluster interior. May have a tree. */
+function drawHill(
+  g: Phaser.GameObjects.Graphics,
+  cx: number, cy: number,
+  h: number,
+  w: number,
+  season: number,
+  rng: () => number,
+): void {
+  if (h < 12) return;
+
+  const N = 18;
+  // Semi-ellipse arc from angle π → 0 (left base → top → right base)
+  const dome: { x: number; y: number }[] = [];
+  for (let i = 0; i <= N; i++) {
+    const a = Math.PI * (1 - i / N);
+    dome.push({ x: cx + Math.cos(a) * w, y: cy - Math.sin(a) * h });
+  }
+
+  // Drop shadow
+  g.fillStyle(0x000000, 0.12);
+  g.fillEllipse(cx + w * 0.08, cy + h * 0.10 + 5, w * 2.1, h * 0.32);
+
+  // Hill body
+  const grassBase = season === 3 ? 0x607060 : season === 2 ? 0x6a8a30 : 0x4e8838;
+  g.fillStyle(grassBase, 0.92);
+  g.fillPoints(dome, true);
+
+  // Lit highlight on upper-left
+  const hiPts: { x: number; y: number }[] = [];
+  const hiEnd = Math.ceil(N * 0.55);
+  for (let i = 0; i <= hiEnd; i++) {
+    const a = Math.PI * (1 - i / N);
+    hiPts.push({ x: cx + Math.cos(a) * w * 0.78, y: cy - Math.sin(a) * h * 0.78 });
+  }
+  hiPts.push({ x: cx, y: cy - h });
+  const grassHi = season === 3 ? 0x88a080 : season === 2 ? 0x90b048 : 0x72b84a;
+  g.fillStyle(grassHi, 0.34);
+  g.fillPoints(hiPts, true);
+
+  // Shadow on right flank
+  const shPts: { x: number; y: number }[] = [];
+  shPts.push({ x: cx, y: cy });
+  for (let i = Math.floor(N / 2); i <= N; i++) {
+    const a = Math.PI * (1 - i / N);
+    shPts.push({ x: cx + Math.cos(a) * w, y: cy - Math.sin(a) * h });
+  }
+  g.fillStyle(0x000000, 0.11);
+  g.fillPoints(shPts, true);
+
+  // Winter snow dusting on taller hills
+  if (season === 3 && h > 55) {
+    const snowRatio = Math.min(0.44, (h - 55) / 130);
+    const snowCutY = cy - h * (1 - snowRatio);
+    const snowPts: { x: number; y: number }[] = [];
+    for (let i = 0; i <= N; i++) {
+      const a = Math.PI * (1 - i / N);
+      const px = cx + Math.cos(a) * w;
+      const py = cy - Math.sin(a) * h;
+      if (py <= snowCutY + 4) snowPts.push({ x: px, y: py });
+    }
+    if (snowPts.length > 2) {
+      snowPts.push({ x: snowPts[snowPts.length - 1].x, y: snowCutY });
+      snowPts.unshift({ x: snowPts[0].x, y: snowCutY });
+      g.fillStyle(0xdce8ff, 0.70);
+      g.fillPoints(snowPts, true);
+    }
+  }
+
+  // Optional tree on dome surface
+  if (h > 42 && rng() < 0.30) {
+    const treeX = cx + (rng() - 0.5) * w * 0.52;
+    const tOffset = Math.max(-0.98, Math.min(0.98, (treeX - cx) / (w || 1)));
+    const treeY = cy - Math.sqrt(1 - tOffset * tOffset) * h * 0.76 - 10;
+    if (rng() < 0.42) {
+      vegConifer(g, treeX, treeY, rng, season === 3);
+    } else if (season === 3) {
+      vegBareTree(g, treeX, treeY, rng);
+    } else {
+      const palettes = VEG_PALETTES[season];
+      const palIdx = Math.floor(rng() * 4) % palettes.length;
+      vegBroadleaf(g, treeX, treeY, 16 + rng() * 14, palettes[palIdx], rng);
+    }
+  }
+}
+
+// ─── Cliff face drawing ───────────────────────────────────────────────────────
+
+/** Draws a stone cliff face on every ocean/coast-facing edge of a mountain tile.
+ *  Includes horizontal strata lines and wave foam at the cliff base. */
+function drawCliffFace(
+  g: Phaser.GameObjects.Graphics,
+  tx: number, ty: number,
+  tiles: Tile[][],
+  width: number, height: number,
+  season: number,
+  rng: () => number,
+): void {
+  const TS = TILE_SIZE;
+  const DIRS: [number, number][] = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+
+  for (const [dx, dy] of DIRS) {
+    const nx = tx + dx, ny = ty + dy;
+    if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+    const n = tiles[ny][nx];
+    if (n.type !== 'ocean' && n.type !== 'coast') continue;
+
+    const cliffH  = 48 + rng() * 38;
+    const halfEdge = TS * 0.50;
+    // Edge midpoint (boundary between the two tiles)
+    const ex = (tx + 0.5 + dx * 0.5) * TS;
+    const ey = (ty + 0.5 + dy * 0.5) * TS;
+    // Along-edge axis (perpendicular to the cliff's outward normal)
+    const ax = Math.abs(dy);  // 1 for N/S edges, 0 for E/W
+    const ay = Math.abs(dx);
+
+    // Top of cliff face = the edge between the mountain and water tiles
+    const topL = { x: ex - ax * halfEdge, y: ey - ay * halfEdge };
+    const topR = { x: ex + ax * halfEdge, y: ey + ay * halfEdge };
+    // Bottom: drops toward viewer (+y screen) and slightly toward the ocean
+    const dropY = cliffH * 0.82;
+    const dropX = dx * cliffH * 0.22;
+    const botL = { x: topL.x + dropX, y: topL.y + dropY };
+    const botR = { x: topR.x + dropX, y: topR.y + dropY };
+
+    // Drop shadow
+    g.fillStyle(0x000000, 0.16);
+    g.fillPoints([
+      { x: topL.x + 4, y: topL.y + 5 },
+      { x: topR.x + 4, y: topR.y + 5 },
+      { x: botR.x + 4, y: botR.y + 5 },
+      { x: botL.x + 4, y: botL.y + 5 },
+    ], true);
+
+    // Main cliff face
+    const stoneColor = season === 3 ? 0x8898a8 : 0x7a6e5c;
+    g.fillStyle(stoneColor, 0.90);
+    g.fillPoints([topL, topR, botR, botL], true);
+
+    // Lit left third
+    const t1 = 0.36;
+    const midTL = { x: topL.x + (topR.x - topL.x) * t1, y: topL.y + (topR.y - topL.y) * t1 };
+    const midBL = { x: botL.x + (botR.x - botL.x) * t1, y: botL.y + (botR.y - botL.y) * t1 };
+    const stoneLit = season === 3 ? 0xa8b8c8 : 0xa09080;
+    g.fillStyle(stoneLit, 0.26);
+    g.fillPoints([topL, midTL, midBL, botL], true);
+
+    // Shadow right third
+    const t2 = 0.66;
+    const midTR = { x: topL.x + (topR.x - topL.x) * t2, y: topL.y + (topR.y - topL.y) * t2 };
+    const midBR = { x: botL.x + (botR.x - botL.x) * t2, y: botL.y + (botR.y - botL.y) * t2 };
+    g.fillStyle(0x000000, 0.18);
+    g.fillPoints([midTR, topR, botR, midBR], true);
+
+    // Horizontal strata lines (geological layers)
+    const strataCount = 3 + Math.floor(rng() * 4);
+    for (let s = 0; s < strataCount; s++) {
+      const t = (s + 0.5 + (rng() - 0.5) * 0.28) / strataCount;
+      const sl = { x: topL.x + (botL.x - topL.x) * t, y: topL.y + (botL.y - topL.y) * t };
+      const sr = { x: topR.x + (botR.x - topR.x) * t, y: topR.y + (botR.y - topR.y) * t };
+      const strataCol = rng() < 0.4 ? 0x504840 : 0x908070;
+      g.lineStyle(0.7 + rng() * 0.9, strataCol, 0.40 + rng() * 0.22);
+      g.lineBetween(sl.x, sl.y, sr.x, sr.y);
+    }
+
+    // Silhouette outline
+    g.lineStyle(1.0, 0x282018, 0.58);
+    g.strokePoints([topL, topR, botR, botL], true);
+
+    // Wave foam at cliff base
+    const foamCount = 2 + Math.floor(rng() * 4);
+    for (let f = 0; f < foamCount; f++) {
+      const t = rng();
+      const fx = botL.x + (botR.x - botL.x) * t;
+      const fy = botL.y + (botR.y - botL.y) * t + 2 + rng() * 8;
+      const fr = 10 + rng() * 18;
+      g.fillStyle(0xf0f4fc, 0.54 - rng() * 0.20);
+      g.fillEllipse(fx, fy, fr * 2.4, fr * 0.50);
+    }
+  }
 }

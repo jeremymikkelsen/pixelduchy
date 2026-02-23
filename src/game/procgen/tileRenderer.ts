@@ -402,44 +402,30 @@ function drawForest(ctx: CanvasRenderingContext2D, size: number, rng: () => numb
 }
 
 function drawMountain(ctx: CanvasRenderingContext2D, size: number, rng: () => number, season: number, _layoutRng: () => number) {
-  // Winter: lighter grey-white base; Summer: bare rocky
-  const base = season === 3 ? '#909090' : '#7a7060';
+  // Mountain tiles show the dark rocky ground visible between and around peaks.
+  // All 3D peak detail (faces, ridges, snow) is drawn by the mountain overlay layer.
+  // Winter: slightly cool dark grey; other seasons: near-black charcoal-brown.
+  const base = season === 3 ? '#22222c' : '#181410';
   ctx.fillStyle = base;
   ctx.fillRect(0, 0, size, size);
 
-  const patchCount = season === 3 ? 6 : 12;
-  for (let i = 0; i < patchCount; i++) {
-    const light = rng() > 0.5;
-    radialPatch(ctx, rng() * size, rng() * size, 4 + rng() * 12,
+  // Subtle rock texture — very low contrast patches to avoid visual noise
+  for (let i = 0; i < 7; i++) {
+    const light = rng() > 0.55;
+    radialPatch(
+      ctx, rng() * size, rng() * size, 8 + rng() * 20,
       light
-        ? `rgba(178,168,152,${(0.3 + rng() * 0.35).toFixed(2)})`
-        : `rgba(48,43,36,${(0.22 + rng() * 0.28).toFixed(2)})`);
+        ? `rgba(55,50,42,${(0.20 + rng() * 0.24).toFixed(2)})`
+        : `rgba(8,7,5,${(0.28 + rng() * 0.22).toFixed(2)})`,
+    );
   }
 
-  // Snow patches — heavy in winter, partial in spring/fall, none in summer
-  const snowPatchCount = [3, 0, 2, 14][season];
-  const snowBase = season === 3 ? 0.55 : 0.28;
-  for (let i = 0; i < snowPatchCount; i++) {
-    const cx = season === 3 ? rng() * size : rng() * size * 0.8 + size * 0.1;
-    const cy = season === 3 ? rng() * size : rng() * size * 0.6;
-    radialPatch(ctx, cx, cy, 6 + rng() * 16,
-      `rgba(228,238,255,${(snowBase + rng() * 0.35).toFixed(2)})`);
-  }
-
-  const boulderCount = season === 3 ? 1 : 2 + Math.floor(rng() * 3);
-  for (let i = 0; i < boulderCount; i++) {
-    drawRock(ctx, 8 + rng() * (size - 16), 8 + rng() * (size - 16), 5 + rng() * 9, rng);
-  }
-
-  ctx.strokeStyle = 'rgba(38,34,26,0.5)';
-  ctx.lineWidth = 0.7;
-  for (let i = 0; i < 5; i++) {
-    const sx = rng() * size;
-    const sy = rng() * size;
-    ctx.beginPath();
-    ctx.moveTo(sx, sy);
-    ctx.lineTo(sx + (rng() - 0.5) * 18, sy + (rng() - 0.5) * 14);
-    ctx.stroke();
+  // Winter only: sparse snow dusting on the rocky ground
+  if (season === 3) {
+    for (let i = 0; i < 3; i++) {
+      radialPatch(ctx, rng() * size, rng() * size, 4 + rng() * 11,
+        `rgba(195,210,230,${(0.16 + rng() * 0.18).toFixed(2)})`);
+    }
   }
 }
 

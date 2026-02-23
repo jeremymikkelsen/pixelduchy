@@ -75,7 +75,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   initLocalGame: () => {
     const seed = Date.now();
-    const map = generateWorld({ width: 64, height: 64, seed });
+    const map = generateWorld({ width: 80, height: 80, seed });
     const start = findStartingTile(map);
 
     // Claim a 4×4 area (from start-1 to start+2 in both axes), skip ocean

@@ -5,6 +5,15 @@ import { useGameStore } from '../../store/gameStore';
 import { TILE_SIZE, NUM_TILE_VARIANTS, getSeasonIndex } from '../procgen/tileRenderer';
 import type { WorldMap, Duchy, TileType } from '../../types';
 
+// ─── Mountain cluster data (computed from tiles at render time) ────────────────
+interface MountainCluster {
+  tiles: { x: number; y: number }[];
+  interiorDepth: Map<string, number>;
+  maxDepth: number;
+  size: number;
+  tier: 0 | 1 | 2;  // 0=small(1-5), 1=medium(6-13), 2=tall(14+)
+}
+
 /**
  * MapScene - renders the game world tilemap and handles camera/input.
  */
@@ -16,6 +25,7 @@ export class MapScene extends Phaser.Scene {
   private biomeTransitionLayer!: Phaser.GameObjects.RenderTexture;
   private beachLayer!: Phaser.GameObjects.RenderTexture;
   private vegetationLayer!: Phaser.GameObjects.RenderTexture;
+  private mountainLayer!: Phaser.GameObjects.RenderTexture;
   // Dynamic layers (redrawn each turn / state-update)
   private territoryLayer!: Phaser.GameObjects.RenderTexture;
   private riverLayer!: Phaser.GameObjects.RenderTexture;
@@ -36,7 +46,7 @@ export class MapScene extends Phaser.Scene {
 
   create() {
     const existingSession = useGameStore.getState().session;
-    this.world = existingSession?.map ?? generateWorld({ width: 64, height: 64, seed: Date.now() });
+    this.world = existingSession?.map ?? generateWorld({ width: 80, height: 80, seed: Date.now() });
     this.currentSeasonIndex = getSeasonIndex(existingSession?.turnNumber ?? 1);
 
     // Static overlays baked to RenderTextures — drawn once per update then
@@ -51,6 +61,7 @@ export class MapScene extends Phaser.Scene {
     this.beachLayer           = this.add.renderTexture(0, 0, rtW, rtH).setDepth(0.42).setOrigin(0, 0).setScale(2);
     this.riverLayer           = this.add.renderTexture(0, 0, rtW, rtH).setDepth(0.5).setOrigin(0, 0).setScale(2);
     this.vegetationLayer      = this.add.renderTexture(0, 0, rtW, rtH).setDepth(0.55).setOrigin(0, 0).setScale(2);
+    this.mountainLayer        = this.add.renderTexture(0, 0, rtW, rtH).setDepth(0.60).setOrigin(0, 0).setScale(2);
     this.territoryLayer       = this.add.renderTexture(0, 0, rtW, rtH).setDepth(1).setOrigin(0, 0).setScale(2);
 
     this.renderTileLayer();
@@ -58,6 +69,7 @@ export class MapScene extends Phaser.Scene {
     this.renderBeach();
     this.renderRivers();
     this.renderVegetation();
+    this.renderMountains();
     this.setupCamera();
     this.setupInput();
 
@@ -74,6 +86,7 @@ export class MapScene extends Phaser.Scene {
         this.renderBeach();
         this.renderRivers();
         this.renderVegetation();
+        this.renderMountains();
         if (state.myDuchy?.tiles.length) {
           const ts = state.myDuchy.tiles;
           const cx = ts.reduce((s, t) => s + t.x, 0) / ts.length;
@@ -91,6 +104,7 @@ export class MapScene extends Phaser.Scene {
         this.renderBiomeTransitions();
         this.renderBeach();
         this.renderVegetation();
+        this.renderMountains();
         // Rivers are permanent — no re-bake on season change
       }
 
@@ -245,8 +259,8 @@ export class MapScene extends Phaser.Scene {
 
       // Build a filled polygon: left edge (narrow at source) → right edge (wide at mouth).
       // Width grows from MIN_W at index 0 to MAX_W at the last smooth point.
-      const MIN_W = 1.5;
-      const MAX_W = 10.0;
+      const MIN_W = 4.5;
+      const MAX_W = 30.0;
       const n = smooth.length;
       const leftPts:  { x: number; y: number }[] = [];
       const rightPts: { x: number; y: number }[] = [];
@@ -373,6 +387,37 @@ export class MapScene extends Phaser.Scene {
     this.vegetationLayer.clear();
     g.setScale(0.5);
     this.vegetationLayer.draw(g, 0, 0);
+    g.destroy();
+  }
+
+  // ─── Mountain peaks ───────────────────────────────────────────────────────────
+
+  /** Bakes 3D mountain peaks as a world-space overlay (depth 0.60).
+   *  Peak height and snow cap vary by cluster size and season. */
+  private renderMountains() {
+    const g = this.make.graphics({}, false);
+    const { tiles, width, height } = this.world;
+    const clusters = computeMountainClusters(tiles, width, height);
+
+    for (const cluster of clusters) {
+      // Draw back-to-front (northernmost tile first) for painter's algorithm.
+      const sorted = [...cluster.tiles].sort((a, b) => a.y !== b.y ? a.y - b.y : a.x - b.x);
+      for (const { x: tx, y: ty } of sorted) {
+        const interior    = cluster.interiorDepth.get(`${tx},${ty}`) ?? 0;
+        const depthFactor = cluster.maxDepth > 0 ? interior / cluster.maxDepth : 0;
+        // Edge tiles get ~55% of the base height; interior peaks get up to 100%.
+        const baseH  = Math.min(55 + cluster.size * 12, 190);
+        const peakH  = baseH * (0.55 + 0.45 * depthFactor);
+        const cx = tx * TILE_SIZE + TILE_SIZE / 2;
+        const cy = ty * TILE_SIZE + TILE_SIZE / 2;
+        const rng = makeRng((tx * 7919 + ty * 6271 + 99) >>> 0);
+        drawMountainPeak(g, cx, cy, peakH, cluster.tier, this.currentSeasonIndex, rng);
+      }
+    }
+
+    this.mountainLayer.clear();
+    g.setScale(0.5);
+    this.mountainLayer.draw(g, 0, 0);
     g.destroy();
   }
 
@@ -1100,4 +1145,190 @@ function drawRockyCoast(
     g.fillStyle(0x9a9888, 0.40);
     g.fillCircle(bx - r * 0.22, by - r * 0.18, r * 0.36);
   }
+}
+
+// ─── Mountain cluster analysis ────────────────────────────────────────────────
+
+/** Finds connected components of mountain tiles and computes interior depth
+ *  (BFS distance from the cluster edge) for each tile. */
+function computeMountainClusters(
+  tiles: { type: string }[][],
+  width: number,
+  height: number,
+): MountainCluster[] {
+  const visited = new Uint8Array(width * height);
+  const clusters: MountainCluster[] = [];
+  const DIRS: [number, number][] = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (tiles[y][x].type !== 'mountain' || visited[y * width + x]) continue;
+
+      // BFS flood-fill to collect the connected component.
+      const queue: { x: number; y: number }[] = [{ x, y }];
+      const clusterTiles: { x: number; y: number }[] = [];
+      visited[y * width + x] = 1;
+
+      while (queue.length) {
+        const pt = queue.shift()!;
+        clusterTiles.push(pt);
+        for (const [dx, dy] of DIRS) {
+          const nx = pt.x + dx, ny = pt.y + dy;
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+          if (tiles[ny][nx].type !== 'mountain' || visited[ny * width + nx]) continue;
+          visited[ny * width + nx] = 1;
+          queue.push({ x: nx, y: ny });
+        }
+      }
+
+      // Build a fast lookup set for this cluster.
+      const clusterSet = new Set(clusterTiles.map(t => `${t.x},${t.y}`));
+
+      // BFS inward from edge tiles to compute interior depth.
+      const interiorDepth = new Map<string, number>();
+      const iqueue: { x: number; y: number; d: number }[] = [];
+
+      for (const pt of clusterTiles) {
+        const isEdge = DIRS.some(([dx, dy]) => {
+          const nx = pt.x + dx, ny = pt.y + dy;
+          return nx < 0 || ny < 0 || nx >= width || ny >= height
+            || tiles[ny][nx].type !== 'mountain';
+        });
+        if (isEdge) {
+          interiorDepth.set(`${pt.x},${pt.y}`, 0);
+          iqueue.push({ x: pt.x, y: pt.y, d: 0 });
+        }
+      }
+
+      while (iqueue.length) {
+        const { x: tx, y: ty, d } = iqueue.shift()!;
+        for (const [dx, dy] of DIRS) {
+          const nx = tx + dx, ny = ty + dy;
+          const key = `${nx},${ny}`;
+          if (clusterSet.has(key) && !interiorDepth.has(key)) {
+            interiorDepth.set(key, d + 1);
+            iqueue.push({ x: nx, y: ny, d: d + 1 });
+          }
+        }
+      }
+
+      const maxDepth = clusterTiles.reduce(
+        (m, t) => Math.max(m, interiorDepth.get(`${t.x},${t.y}`) ?? 0), 0,
+      );
+      const size = clusterTiles.length;
+      const tier: 0 | 1 | 2 = size >= 14 ? 2 : size >= 6 ? 1 : 0;
+
+      clusters.push({ tiles: clusterTiles, interiorDepth, maxDepth, size, tier });
+    }
+  }
+
+  return clusters;
+}
+
+// ─── 3D mountain peak drawing ─────────────────────────────────────────────────
+
+/** Draws a single mountain peak centered at (cx, cy) in world pixels.
+ *  h = height of peak above the tile center.
+ *  Uses a two-face 3/4-projection pyramid with rocky texture, snow cap, and cracks. */
+function drawMountainPeak(
+  g: Phaser.GameObjects.Graphics,
+  cx: number, cy: number,
+  h: number,
+  tier: 0 | 1 | 2,
+  season: number,
+  rng: () => number,
+): void {
+  if (h < 22) return;
+
+  const baseW = TILE_SIZE * 0.50 + h * 0.22;  // half-width at base
+  const baseH = TILE_SIZE * 0.15;              // how far base drops below tile center
+  const tipY  = cy - h;
+  const leftX = cx - baseW;
+  const rightX = cx + baseW;
+  const baseY  = cy + baseH;
+
+  // Drop shadow
+  g.fillStyle(0x000000, 0.10);
+  g.fillEllipse(cx + baseW * 0.12, baseY + 5, baseW * 2.2, baseH * 2.0);
+
+  // Left face — sun-lit (cooler grey in winter, warm stone otherwise)
+  g.fillStyle(season === 3 ? 0x9898b0 : 0x907a60, 1.0);
+  g.fillTriangle(cx, tipY, leftX, baseY, cx, baseY);
+
+  // Highlight on upper-left portion of left face (sun angle)
+  g.fillStyle(season === 3 ? 0xb8b8d0 : 0xb09878, 0.36);
+  const hlY = tipY + (baseY - tipY) * 0.55;
+  g.fillTriangle(cx, tipY, leftX, hlY, cx, hlY);
+
+  // Right face — in shadow
+  g.fillStyle(season === 3 ? 0x606070 : 0x584840, 1.0);
+  g.fillTriangle(cx, tipY, cx, baseY, rightX, baseY);
+
+  // Rocky facet patches (ellipses scattered across both faces)
+  const facetColor = season === 3 ? 0xb0b0c4 : 0xa89070;
+  for (let i = 0; i < 3 + Math.floor(rng() * 3); i++) {
+    const t  = rng();
+    const sx = rng() > 0.5 ? -1 : 1;
+    const fx = cx + sx * baseW * t * 0.58 + (rng() - 0.5) * 16;
+    const fy = tipY + (baseY - tipY) * t;
+    const fr = 5 + rng() * 12;
+    g.fillStyle(facetColor, 0.30);
+    g.fillEllipse(fx, fy, fr * 2.0, fr * 0.85);
+  }
+
+  // Snow cap — fraction varies by tier and season
+  let snowFrac = 0;
+  if      (tier === 2)                 snowFrac = 0.36;  // always capped (tall peaks)
+  else if (tier === 1 && season === 0) snowFrac = 0.20;  // spring: medium peaks
+  else if (tier === 1 && season === 3) snowFrac = 0.28;  // winter: medium peaks
+  else if (season === 3)               snowFrac = 0.16;  // winter: all mountains
+
+  if (snowFrac > 0) {
+    const sd  = h * snowFrac;           // snow depth in px
+    const sbY = tipY + sd;             // y at snow base
+    const sw  = baseW * snowFrac;      // half-width of snow base
+
+    // Main snow body
+    g.fillStyle(0xdce8ff, 0.95);
+    g.fillTriangle(cx, tipY, cx - sw, sbY, cx + sw, sbY);
+    // Bright highlight (upper-left)
+    g.fillStyle(0xf4f8ff, 0.58);
+    g.fillTriangle(cx, tipY, cx - sw * 0.52, tipY + sd * 0.56, cx + sw * 0.08, tipY + sd * 0.40);
+    // Cool blue shadow (right side)
+    g.fillStyle(0x8ab4d8, 0.20);
+    g.fillTriangle(cx + sw * 0.06, tipY + sd * 0.12, cx + sw, sbY, cx - sw * 0.08, sbY);
+    // Snow edge line
+    g.lineStyle(0.8, 0xc0d8f8, 0.65);
+    g.beginPath();
+    g.moveTo(cx - sw, sbY);
+    g.lineTo(cx, tipY);
+    g.lineTo(cx + sw, sbY);
+    g.strokePath();
+  }
+
+  // Crack / crevice lines across both faces
+  g.lineStyle(0.7, 0x1c1610, 0.38);
+  for (let i = 0; i < 3 + Math.floor(rng() * 4); i++) {
+    const t   = 0.12 + rng() * 0.76;
+    const sx  = rng() > 0.5 ? -1 : 1;
+    const crX = cx + sx * baseW * t * 0.52 + (rng() - 0.5) * 12;
+    const crY = tipY + (baseY - tipY) * t;
+    const len = 10 + rng() * 22;
+    const ang = (rng() - 0.5) * 0.9;
+    g.lineBetween(crX, crY,
+      crX + Math.sin(ang) * len,
+      crY + Math.cos(Math.abs(ang) * 0.5 + 0.5) * len);
+  }
+
+  // Silhouette outline (left edge → peak → right edge)
+  g.lineStyle(1.2, 0x181410, 0.62);
+  g.beginPath();
+  g.moveTo(leftX, baseY);
+  g.lineTo(cx, tipY);
+  g.lineTo(rightX, baseY);
+  g.strokePath();
+
+  // Centre ridge line separating left and right faces
+  g.lineStyle(0.6, 0x201810, 0.48);
+  g.lineBetween(cx, tipY, cx, baseY);
 }

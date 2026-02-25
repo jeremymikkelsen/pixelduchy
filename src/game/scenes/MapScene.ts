@@ -436,8 +436,9 @@ export class MapScene extends Phaser.Scene {
 
   // ─── Mountain peaks ───────────────────────────────────────────────────────────
 
-  /** Bakes 3D mountain peaks as a world-space overlay (depth 0.60).
-   *  Hierarchical: grass hills → secondary peaks → one main summit per cluster. */
+  /** Bakes mountain overlays using procedural height-field generation + isometric
+   *  projection. Each connected cluster gets its own MountainGenData pass, then
+   *  the depth-sorted triangles are drawn into the shared RenderTexture. */
   private renderMountains() {
     const g = this.make.graphics({}, false);
     const { tiles, width, height } = this.world;
@@ -445,65 +446,37 @@ export class MapScene extends Phaser.Scene {
     const season = this.currentSeasonIndex;
 
     for (const cluster of clusters) {
-      // Main peak dimensions scale with cluster size.
-      // Minimum height is substantial even for a single tile so peaks are always visible.
-      const mainH  = Math.min(140 + cluster.size * 9, 380);
-      const mainBW = mainH * 1.85;
-
-      // Build fast sets to identify summit tiles.
-      const summitSet = new Set<string>([
-        `${cluster.mainSummit.x},${cluster.mainSummit.y}`,
-        ...cluster.secondarySummits.map(s => `${s.x},${s.y}`),
-      ]);
-
-      // Separate cluster tiles into cliff edges, hills, and non-summit interiors.
-      const cliffTiles: { x: number; y: number }[] = [];
-      const hillTiles:  { x: number; y: number }[] = [];
+      // Bounding box of cluster tiles in tile coordinates.
+      let minTX = Infinity, minTY = Infinity, maxTX = -Infinity, maxTY = -Infinity;
       for (const pt of cluster.tiles) {
-        if (summitSet.has(`${pt.x},${pt.y}`)) continue;
+        if (pt.x < minTX) minTX = pt.x;
+        if (pt.y < minTY) minTY = pt.y;
+        if (pt.x > maxTX) maxTX = pt.x;
+        if (pt.y > maxTY) maxTY = pt.y;
+      }
+      const clusterW = maxTX - minTX + 1;
+      const clusterH = maxTY - minTY + 1;
+
+      // Seed from main summit position (deterministic per cluster).
+      const seed = (cluster.mainSummit.x * 7919 + cluster.mainSummit.y * 6271) >>> 0;
+
+      // Generate height+shade field, then project + draw it.
+      const mtnData = generateMountainData(clusterW, clusterH, seed, cluster.tier);
+      const anchorX = (minTX + clusterW * 0.5) * TILE_SIZE;
+      const anchorY = (maxTY + 1) * TILE_SIZE;
+      const footprintPx = Math.max(clusterW, 2) * TILE_SIZE * 1.5;
+      renderMountainProjection(g, mtnData, anchorX, anchorY, footprintPx, season);
+
+      // Stone cliffs on ocean/coast-facing edges (drawn on top of the projection).
+      for (const pt of cluster.tiles) {
         const adjacentToWater = [[-1,0],[1,0],[0,-1],[0,1]].some(([dx, dy]) => {
           const t = tiles[pt.y + dy]?.[pt.x + dx];
           return t?.type === 'ocean' || t?.type === 'coast';
         });
-        if (adjacentToWater) cliffTiles.push(pt);
-        else hillTiles.push(pt);
-      }
-
-      // 1. Cliffs (back-to-front) — mountain tiles touching water.
-      for (const pt of cliffTiles.sort((a, b) => a.y - b.y)) {
-        const rng = makeRng((pt.x * 7919 + pt.y * 6271 + 7) >>> 0);
-        drawCliffFace(g, pt.x, pt.y, tiles, width, height, season, rng);
-      }
-
-      // 2. Grass hills (back-to-front) — non-summit interior and edge tiles.
-      for (const pt of hillTiles.sort((a, b) => a.y - b.y)) {
-        const depth = cluster.interiorDepth.get(`${pt.x},${pt.y}`) ?? 0;
-        const df    = cluster.maxDepth > 0 ? depth / cluster.maxDepth : 0;
-        // Hills are large so they overlap adjacent tiles and flow together like beaches/trees.
-        const h = 48 + df * 90;           // 48–138 px
-        const w = 110 + df * 220;         // 110–330 px half-width (≈ 1–2.6 tile radii)
-        const cx = pt.x * TILE_SIZE + TILE_SIZE / 2;
-        const cy = pt.y * TILE_SIZE + TILE_SIZE / 2;
-        const rng = makeRng((pt.x * 7919 + pt.y * 6271 + 11) >>> 0);
-        drawHill(g, cx, cy, h, w, season, rng);
-      }
-
-      // 3. Secondary summits (back-to-front, smaller triangle peaks).
-      for (const s of [...cluster.secondarySummits].sort((a, b) => a.y - b.y)) {
-        const h  = mainH * 0.62;
-        const bw = mainBW * 0.62;
-        const cx = s.x * TILE_SIZE + TILE_SIZE / 2;
-        const cy = s.y * TILE_SIZE + TILE_SIZE / 2;
-        const rng = makeRng((s.x * 7919 + s.y * 6271 + 55) >>> 0);
-        drawMountainPeak(g, cx, cy, h, bw, cluster.tier, season, rng);
-      }
-
-      // 4. Main summit — always drawn last so it dominates over everything nearby.
-      {
-        const cx  = cluster.mainSummit.x * TILE_SIZE + TILE_SIZE / 2;
-        const cy  = cluster.mainSummit.y * TILE_SIZE + TILE_SIZE / 2;
-        const rng = makeRng((cluster.mainSummit.x * 7919 + cluster.mainSummit.y * 6271 + 99) >>> 0);
-        drawMountainPeak(g, cx, cy, mainH, mainBW, cluster.tier, season, rng);
+        if (adjacentToWater) {
+          const rng = makeRng((pt.x * 7919 + pt.y * 6271 + 7) >>> 0);
+          drawCliffFace(g, pt.x, pt.y, tiles, width, height, season, rng);
+        }
       }
     }
 
@@ -1347,214 +1320,281 @@ function computeMountainClusters(
   return clusters;
 }
 
-// ─── 3D mountain peak drawing ─────────────────────────────────────────────────
+// ─── Mountain height-field generator (adapted from MountainGenerator.js) ─────
 
-/** Draws a single mountain peak in 3/4 top-down view.
- *  Key visual: vertical hatching lines running down both faces — the primary
- *  texture cue from fantasy map tradition. Shadow face (right ~60%) is very dark;
- *  lit face (left ~40%) is medium-dark warm. Ridge crest is the brightest strip.
- *  h = screen-pixel height, baseW = half-width at base. */
-function drawMountainPeak(
-  g: Phaser.GameObjects.Graphics,
-  cx: number, cy: number,
-  h: number,
-  baseW: number,
-  tier: 0 | 1 | 2,
-  season: number,
-  rng: () => number,
-): void {
-  if (h < 22) return;
-
-  const baseH  = TILE_SIZE * 0.22;
-  const tipY   = cy - h;
-  const baseY  = cy + baseH;
-
-  // Pentagon silhouette: shoulders bow outward at ~38% from tip to base.
-  const shT  = 0.38;
-  const shY  = tipY + (baseY - tipY) * shT;
-  const shW  = baseW * 1.10;
-
-  const peak  = { x: cx,         y: tipY };
-  const shR   = { x: cx + shW,   y: shY  };
-  const baseR = { x: cx + baseW, y: baseY };
-  const baseL = { x: cx - baseW, y: baseY };
-  const shL   = { x: cx - shW,   y: shY  };
-
-  // ── Ground shadow
-  g.fillStyle(0x000000, 0.18);
-  g.fillEllipse(cx + baseW * 0.08, baseY + 10, baseW * 2.9, baseH * 3.6);
-
-  // ── Shadow face (right ~60% of width — very dark charcoal)
-  const shadowDark = season === 3 ? 0x323a44 : 0x1e1810;
-  g.fillStyle(shadowDark, 1.0);
-  g.fillPoints([peak, shR, baseR, { x: cx, y: baseY }], true);
-
-  // ── Lit face (left ~40% — medium-dark warm brown)
-  const litFace = season === 3 ? 0x5a6470 : 0x4e3a28;
-  g.fillStyle(litFace, 1.0);
-  g.fillPoints([peak, { x: cx, y: baseY }, baseL, shL], true);
-
-  // ── Upper-peak "top face" — warm strip near summit implying 3/4 perspective
-  const topFace = season === 3 ? 0x7080a0 : 0x6a5438;
-  g.fillStyle(topFace, 0.78);
-  g.fillPoints([
-    peak,
-    { x: cx - shW * 0.55, y: shY * 0.50 + tipY * 0.50 },
-    { x: cx, y: tipY + (baseY - tipY) * 0.32 },
-    { x: cx + shW * 0.12, y: tipY + (baseY - tipY) * 0.22 },
-  ], true);
-
-  // ── Ridge crest line (bright warm highlight — the highest-contrast point)
-  g.lineStyle(3.2, season === 3 ? 0x9eb0c4 : 0x8a7256, 0.92);
-  g.lineBetween(cx - shW * 0.10, tipY + 3, cx + shW * 0.06, tipY + (baseY - tipY) * 0.30);
-
-  // ── Vertical hatching — SHADOW FACE (right side, cx → cx+baseW)
-  // Lines fan slightly outward from ridge, running straight down toward base.
-  // This is the key texture from mountain4.png and the tutorial references.
-  const shadowHatchCol = season === 3 ? 0x18202a : 0x100a06;
-  const hatchCount = Math.floor(baseW * 0.14) + 4;
-  for (let i = 0; i < hatchCount; i++) {
-    const t   = i / Math.max(1, hatchCount - 1);   // 0 at ridge, 1 at right edge
-    const lx  = cx + t * baseW;
-    const d   = lx - cx;
-    // Trace the pentagon outline to find yTop (where the line starts)
-    const yTop = d <= shW
-      ? tipY + (shY - tipY) * (d / shW)
-      : shY + (baseY - shY) * ((d - shW) / Math.max(1, baseW - shW));
-    const jitter  = (rng() - 0.5) * 4;
-    const hatchLen = (baseY - yTop) * (0.20 + rng() * 0.65) * (1 - t * 0.40);
-    g.lineStyle(0.8 + rng() * 0.7, shadowHatchCol, 0.32 + rng() * 0.45);
-    g.lineBetween(lx + jitter, yTop + rng() * 7, lx + jitter, yTop + hatchLen);
-  }
-
-  // ── Vertical hatching — LIT FACE (left side, sparser and lighter)
-  const litHatchCol = season === 3 ? 0x282e38 : 0x201610;
-  const litHatchCount = Math.floor(hatchCount * 0.50);
-  for (let i = 0; i < litHatchCount; i++) {
-    const t   = i / Math.max(1, litHatchCount - 1);
-    const lx  = cx - t * baseW;
-    const d   = cx - lx;
-    const yTop = d <= shW
-      ? tipY + (shY - tipY) * (d / shW)
-      : shY + (baseY - shY) * ((d - shW) / Math.max(1, baseW - shW));
-    const jitter  = (rng() - 0.5) * 3;
-    const hatchLen = (baseY - yTop) * (0.16 + rng() * 0.44) * (1 - t * 0.30);
-    g.lineStyle(0.7 + rng() * 0.5, litHatchCol, 0.14 + rng() * 0.20);
-    g.lineBetween(lx + jitter, yTop + rng() * 5, lx + jitter, yTop + hatchLen);
-  }
-
-  // ── Snow cap (lumpy asymmetric polygon, heavier on lit/left side)
-  let snowFrac = 0;
-  if      (tier === 2)                 snowFrac = 0.34;
-  else if (tier === 1 && season === 0) snowFrac = 0.19;
-  else if (tier === 1 && season === 3) snowFrac = 0.26;
-  else if (season === 3)               snowFrac = 0.14;
-
-  if (snowFrac > 0) {
-    const sd  = h * snowFrac;
-    const sbY = tipY + sd;
-    const sw  = baseW * snowFrac * 1.18;
-    // Main snow body — lumpy polygon, left-heavy
-    const snowPts = [
-      peak,
-      { x: cx - sw * 1.22, y: sbY + rng() * sd * 0.10 },
-      { x: cx - sw * 0.55, y: sbY + sd * 0.15 + rng() * sd * 0.08 },
-      { x: cx - sw * 0.08, y: sbY + rng() * sd * 0.06 },
-      { x: cx + sw * 0.52, y: sbY - rng() * sd * 0.04 },
-      { x: cx + sw * 0.90, y: sbY },
-    ];
-    g.fillStyle(0xdce8ff, 0.96);
-    g.fillPoints(snowPts, true);
-    // Bright highlight (lit/left portion)
-    g.fillStyle(0xf4f8ff, 0.65);
-    g.fillPoints([
-      peak,
-      { x: cx - sw * 0.72, y: tipY + sd * 0.50 },
-      { x: cx - sw * 0.08, y: tipY + sd * 0.34 },
-    ], true);
-    // Cool-blue shadow on right side of snow
-    g.fillStyle(0x8ab4d8, 0.26);
-    g.fillPoints([
-      { x: cx + sw * 0.06, y: tipY + sd * 0.18 },
-      { x: cx + sw * 0.90, y: sbY },
-      { x: cx - sw * 0.08, y: sbY + rng() * sd * 0.06 },
-      { x: cx, y: tipY + sd * 0.64 },
-    ], true);
-    // Outline at snow boundary
-    g.lineStyle(0.9, 0xc0d8f8, 0.65);
-    g.beginPath();
-    g.moveTo(cx - sw * 1.22, sbY);
-    g.lineTo(cx, tipY);
-    g.lineTo(cx + sw * 0.90, sbY);
-    g.strokePath();
-  }
-
-  // ── Silhouette outline
-  g.lineStyle(1.8, 0x100c08, 0.80);
-  g.strokePoints([peak, shR, baseR, baseL, shL], true);
+interface MountainGenData {
+  width: number;
+  height: number;
+  heightMap: Float32Array;
+  shadeMap: Float32Array;
+  seed: number;
+  snowLine: number;
+  foothillThreshold: number;
 }
 
-// ─── Foothills skirt drawing ──────────────────────────────────────────────────
+/** Generates a height map + directional shade map for a mountain cluster.
+ *  Uses radial falloff, ridge sinusoids, gullies, and random sub-peaks —
+ *  adapted directly from MountainGenerator.js. */
+function generateMountainData(
+  clusterW: number,
+  clusterH: number,
+  seed: number,
+  tier: 0 | 1 | 2,
+): MountainGenData {
+  const CELLS = 7;  // sub-grid cells per world tile
+  const gridW = Math.max(28, clusterW * CELLS);
+  const gridH = Math.max(28, clusterH * CELLS);
+  const rng = makeRng(seed);
+  const TAU = Math.PI * 2;
 
-/** Draws a low foothills oval that skirts the base of mountain clusters.
- *  These are dark green-grey flat ovals — they imply rising ground rather than
- *  being visible hills in their own right. They blend adjacent mountain tiles
- *  into the surrounding terrain, like the beach layer does for coast tiles.
- *  No trees — peaks render their own detail above these. */
-function drawHill(
+  const cx = (gridW - 1) * 0.5;
+  const cy = (gridH - 1) * 0.52;
+  const radiusX = gridW * 0.44;
+  const radiusY = gridH * 0.42;
+
+  // Ridge octave params (5 octaves of sinusoidal angular ridges)
+  const ridgeParams: { amp: number; freq: number; phase: number }[] = [];
+  for (let i = 0; i < 5; i++) {
+    ridgeParams.push({
+      amp:   Math.pow(0.62, i) * (0.65 + rng() * 0.50),
+      freq:  2 + i * 1.7 + (rng() - 0.5) * 0.44,
+      phase: rng() * TAU,
+    });
+  }
+
+  // Sub-peaks (2–4 bumps scattered within the cluster radius)
+  const nPeaks = 2 + Math.floor(rng() * 3);
+  const subPeaks: { px: number; py: number; r: number }[] = [];
+  for (let i = 0; i < nPeaks; i++) {
+    subPeaks.push({
+      px: cx + (rng() - 0.5) * 0.70 * radiusX,
+      py: cy + (rng() - 0.5) * 0.56 * radiusY,
+      r:  0.36 + rng() * 0.26,
+    });
+  }
+
+  const count = gridW * gridH;
+  const raw    = new Float32Array(count);
+  const smooth = new Float32Array(count);
+  const shades = new Float32Array(count);
+
+  // ── Raw height map
+  for (let y = 0; y < gridH; y++) {
+    for (let x = 0; x < gridW; x++) {
+      const dx = (x - cx) / radiusX;
+      const dy = (y - cy) / radiusY;
+      // Cheap domain warp to avoid concentric ring artefacts
+      const wx = 0.095 * Math.sin((x + seed * 0.0001) * 0.21 + y * 0.07);
+      const wy = 0.095 * Math.cos((y - seed * 0.00007) * 0.18 - x * 0.08);
+      const dxw = dx + wx, dyw = dy + wy;
+      const radial = Math.sqrt(dxw * dxw + dyw * dyw);
+      if (radial >= 1.3) continue;
+
+      const angle = Math.atan2(dyw, dxw);
+      let base = Math.max(0, 1 - radial);
+      base = Math.pow(base, 1.45) * (1 + 0.23 * Math.exp(-radial * 4));
+
+      let ridgeWave = 0, ridgeNorm = 0;
+      for (const rp of ridgeParams) {
+        ridgeWave += rp.amp * Math.sin(angle * rp.freq + rp.phase + radial * rp.freq * 1.35);
+        ridgeNorm += Math.abs(rp.amp);
+      }
+      if (ridgeNorm > 0) ridgeWave /= ridgeNorm;
+      const ridgeProfile = 1 + 0.30 * ridgeWave * Math.pow(Math.max(0, 1 - radial), 0.65);
+
+      const gullyWave = Math.sin(angle * 22 + radial * 15 + seed * 0.0000027);
+      const gullyDepth = 0.11 * Math.pow(Math.abs(gullyWave), 2.25) * Math.max(0, 1 - radial);
+
+      let h = base * ridgeProfile - gullyDepth;
+      for (const sp of subPeaks) {
+        const sdx = (x - sp.px) / radiusX, sdy = (y - sp.py) / radiusY;
+        const sr = Math.sqrt(sdx * sdx + sdy * sdy);
+        if (sr < 1) h += Math.pow(1 - sr, 2.1) * sp.r * 0.55;
+      }
+      raw[y * gridW + x] = Math.max(0, Math.min(1, h));
+    }
+  }
+
+  // ── 3×3 weighted blur (reduces aliasing on the triangle mesh)
+  for (let y = 0; y < gridH; y++) {
+    for (let x = 0; x < gridW; x++) {
+      let total = 0, wsum = 0;
+      for (let oy = -1; oy <= 1; oy++) {
+        const ny = y + oy; if (ny < 0 || ny >= gridH) continue;
+        for (let ox = -1; ox <= 1; ox++) {
+          const nx = x + ox; if (nx < 0 || nx >= gridW) continue;
+          const w = (ox === 0 && oy === 0) ? 2 : 1;
+          total += raw[ny * gridW + nx] * w; wsum += w;
+        }
+      }
+      smooth[y * gridW + x] = total / wsum;
+    }
+  }
+
+  // ── Directional shade: light from upper-left [-0.55, -0.35, 0.76]
+  const LX = -0.55, LY = -0.35, LZ = 0.76;
+  const ll = Math.sqrt(LX * LX + LY * LY + LZ * LZ);
+  const nlx = LX / ll, nly = LY / ll, nlz = LZ / ll;
+  for (let y = 0; y < gridH; y++) {
+    const ym = y > 0 ? y - 1 : y, yp = y + 1 < gridH ? y + 1 : y;
+    for (let x = 0; x < gridW; x++) {
+      if (smooth[y * gridW + x] <= 0.025) continue;
+      const xm = x > 0 ? x - 1 : x, xp = x + 1 < gridW ? x + 1 : x;
+      const dzdx = (smooth[y * gridW + xp] - smooth[y * gridW + xm]) * 0.5;
+      const dzdy = (smooth[yp * gridW + x] - smooth[ym * gridW + x]) * 0.5;
+      const nx2 = -dzdx * 2.4, ny2 = -dzdy * 2.4, nz2 = 1.0;
+      const nlen = Math.sqrt(nx2 * nx2 + ny2 * ny2 + nz2 * nz2);
+      shades[y * gridW + x] = Math.max(0, Math.min(1,
+        (nx2 / nlen) * nlx + (ny2 / nlen) * nly + (nz2 / nlen) * nlz,
+      ));
+    }
+  }
+
+  // Snow line is lower on bigger mountains (more snow visible)
+  const snowLine = tier === 2 ? 0.56 : tier === 1 ? 0.65 : 0.75;
+  return { width: gridW, height: gridH, heightMap: smooth, shadeMap: shades, seed, snowLine, foothillThreshold: 0.08 };
+}
+
+// ─── Mountain projection renderer (adapted from MountainProjectionRenderer.js) ─
+
+type MtnRGB = [number, number, number];
+
+function mtnMix(a: MtnRGB, b: MtnRGB, t: number): MtnRGB {
+  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+}
+
+function mtnRgb(c: MtnRGB): number {
+  return (Math.max(0, Math.min(255, Math.round(c[0]))) << 16)
+       | (Math.max(0, Math.min(255, Math.round(c[1]))) << 8)
+       |  Math.max(0, Math.min(255, Math.round(c[2])));
+}
+
+function mtnNoise(x: number, y: number, seed: number): number {
+  let n = Math.imul(x + 11, 374761393) ^ Math.imul(y + 7, 668265263) ^ (seed | 0);
+  n = Math.imul(n ^ (n >>> 13), 1274126177);
+  return ((n ^ (n >>> 16)) >>> 0) / 4294967295;
+}
+
+function mtnShadeColor(
+  h: number, shade: number, slope: number, noise: number,
+  snowLine: number, foothillThreshold: number,
+  rockDark: MtnRGB, rockMid: MtnRGB, rockLight: MtnRGB,
+  snowLight: MtnRGB, snowShade: MtnRGB, foothill: MtnRGB,
+): number {
+  const ss = (e0: number, e1: number, x: number) => {
+    const t = Math.max(0, Math.min(1, (x - e0) / (Math.abs(e1 - e0) || 0.00001)));
+    return t * t * (3 - 2 * t);
+  };
+  let col = mtnMix(rockDark, rockLight, Math.max(0, Math.min(1, 0.16 + shade * 0.86 + h * 0.14)));
+  col = mtnMix(col, rockMid, 0.28);
+  const snowAmt = Math.max(0, Math.min(1,
+    ss(snowLine - 0.06, snowLine + 0.12, h) * (1 - ss(0.52, 0.96, slope)) * (0.74 + shade * 0.26),
+  ));
+  col = mtnMix(col, shade > 0.42 ? snowLight : snowShade, snowAmt);
+  const fbBlend = 1 - ss(foothillThreshold * 0.28, foothillThreshold, h);
+  col = mtnMix(col, foothill, fbBlend * 0.82);
+  const intensity = Math.max(0.5, Math.min(1.12, 0.74 + h * 0.2 - (1 - shade) * 0.14 + (noise - 0.5) * 0.12));
+  return mtnRgb([col[0] * intensity, col[1] * intensity, col[2] * intensity]);
+}
+
+/** Projects a MountainGenData height field into an isometric view and draws
+ *  depth-sorted triangles onto the provided Graphics object.
+ *  anchorX/Y = world-pixel position for the mountain base centre-bottom. */
+function renderMountainProjection(
   g: Phaser.GameObjects.Graphics,
-  cx: number, cy: number,
-  h: number,
-  w: number,
+  data: MountainGenData,
+  anchorX: number, anchorY: number,
+  footprintPx: number,
   season: number,
-  rng: () => number,
 ): void {
-  if (h < 15) return;
+  const { width, height, heightMap, shadeMap, seed, snowLine, foothillThreshold } = data;
+  const gcx = (width - 1) * 0.5, gcy = (height - 1) * 0.5;
+  const xScale     = footprintPx / (width + height);
+  const yScale     = footprintPx * 0.48 / (width + height);
+  const heightScale = footprintPx * 0.55;
 
-  // Very flat profile: low ovalRY so these read as ground-level dark patches,
-  // not visible bumps. Pull center slightly north for the 3/4 view cue.
-  const ovalRX = w;
-  const ovalRY = h * 0.28;       // much flatter than before (was 0.55)
-  const ovalCY = cy - h * 0.10;  // small northward offset
+  // Seasonal palette
+  const rockDark:  MtnRGB = season === 3 ? [72,78,90]    : [54,52,58];
+  const rockMid:   MtnRGB = season === 3 ? [130,108,90]  : [116,90,64];
+  const rockLight: MtnRGB = season === 3 ? [180,165,148] : [169,136,92];
+  const snowLight: MtnRGB = [243, 245, 238];
+  const snowShade: MtnRGB = [198, 207, 219];
+  const foothill:  MtnRGB = season === 3 ? [88,108,108]  : [99,128,78];
 
-  // ── Drop shadow (subtle)
-  g.fillStyle(0x000000, 0.09);
-  g.fillEllipse(cx + ovalRX * 0.04, ovalCY + ovalRY + 3, ovalRX * 2.1, ovalRY * 0.42);
+  // Project every grid vertex into screen-relative space
+  type V = { x: number; y: number; depth: number };
+  const verts: V[] = new Array(width * height);
+  let minX = Infinity, maxX = -Infinity, maxY = -Infinity;
 
-  // ── Main foothill surface — dark green-grey (darker than surrounding terrain)
-  const col = season === 3 ? 0x383e34 : season === 2 ? 0x3c4c24 : 0x404e2e;
-  g.fillStyle(col, 0.86);
-  g.fillEllipse(cx, ovalCY, ovalRX * 2, ovalRY * 2);
-
-  // ── Faint lit highlight (NW — sun from upper-left)
-  const hiCol = season === 3 ? 0x545c50 : season === 2 ? 0x546438 : 0x586840;
-  g.fillStyle(hiCol, 0.24);
-  g.fillEllipse(cx - ovalRX * 0.24, ovalCY - ovalRY * 0.26, ovalRX * 1.28, ovalRY * 1.08);
-
-  // ── South-slope shadow crescent (lower D-shape)
-  const shadowN = 12;
-  const shadowPts: { x: number; y: number }[] = [];
-  for (let i = 0; i <= shadowN; i++) {
-    const a = Math.PI * i / shadowN;
-    shadowPts.push({ x: cx + Math.cos(a) * ovalRX, y: ovalCY + Math.sin(a) * ovalRY });
-  }
-  g.fillStyle(0x000000, 0.12);
-  g.fillPoints(shadowPts, true);
-
-  // ── Winter snow dusting on larger foothills
-  if (season === 3 && h > 65) {
-    const sr = Math.min(0.42, (h - 65) / 140);
-    g.fillStyle(0xdce8ff, 0.45);
-    g.fillEllipse(
-      cx - ovalRX * 0.06,
-      ovalCY - ovalRY * (0.76 - sr * 0.28),
-      ovalRX * 1.15 * sr,
-      ovalRY * 0.88 * sr,
-    );
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const u = x - gcx, v = y - gcy;
+      const h = heightMap[y * width + x];
+      const sx = (u - v) * xScale;
+      const sy = (u + v) * yScale - h * heightScale;
+      const depth = u + v + h * 0.24;
+      verts[y * width + x] = { x: sx, y: sy, depth };
+      if (sx < minX) minX = sx;
+      if (sx > maxX) maxX = sx;
+      if (sy > maxY) maxY = sy;
+    }
   }
 
-  // Consume the rng so the call count matches previous behaviour (no visual change)
-  rng();
+  // Centre horizontally, align bottom to anchorY
+  const offX = anchorX - (minX + maxX) * 0.5;
+  const offY = anchorY - maxY;
+
+  // Build triangle list with depth and pre-computed colour
+  interface Tri {
+    ax: number; ay: number; bx: number; by: number; cx: number; cy: number;
+    depth: number; color: number;
+  }
+  const tris: Tri[] = [];
+
+  for (let y = 0; y < height - 1; y++) {
+    for (let x = 0; x < width - 1; x++) {
+      const i00 = y * width + x,       i10 = y * width + (x + 1);
+      const i01 = (y + 1) * width + x, i11 = (y + 1) * width + (x + 1);
+
+      const h00 = heightMap[i00], h10 = heightMap[i10];
+      const h01 = heightMap[i01], h11 = heightMap[i11];
+      if (Math.max(h00, h10, h01, h11) < 0.02) continue;
+
+      const s00 = shadeMap[i00], s10 = shadeMap[i10];
+      const s01 = shadeMap[i01], s11 = shadeMap[i11];
+      const p00 = verts[i00], p10 = verts[i10];
+      const p01 = verts[i01], p11 = verts[i11];
+
+      const slopeA = Math.abs(h10 - h00) * 0.9 + Math.abs(h11 - h10) * 0.7 + Math.abs(h01 - h00) * 0.7;
+      const slopeB = Math.abs(h11 - h01) * 0.9 + Math.abs(h11 - h10) * 0.7 + Math.abs(h01 - h00) * 0.7;
+
+      tris.push({
+        ax: p00.x + offX, ay: p00.y + offY,
+        bx: p10.x + offX, by: p10.y + offY,
+        cx: p11.x + offX, cy: p11.y + offY,
+        depth: (p00.depth + p10.depth + p11.depth) / 3,
+        color: mtnShadeColor((h00+h10+h11)/3, (s00+s10+s11)/3, slopeA,
+          mtnNoise(x*2, y*2, seed), snowLine, foothillThreshold,
+          rockDark, rockMid, rockLight, snowLight, snowShade, foothill),
+      });
+      tris.push({
+        ax: p00.x + offX, ay: p00.y + offY,
+        bx: p11.x + offX, by: p11.y + offY,
+        cx: p01.x + offX, cy: p01.y + offY,
+        depth: (p00.depth + p11.depth + p01.depth) / 3,
+        color: mtnShadeColor((h00+h11+h01)/3, (s00+s11+s01)/3, slopeB,
+          mtnNoise(x*2+1, y*2+1, seed), snowLine, foothillThreshold,
+          rockDark, rockMid, rockLight, snowLight, snowShade, foothill),
+      });
+    }
+  }
+
+  // Painter's algorithm: back-to-front sort, then draw
+  tris.sort((a, b) => a.depth - b.depth);
+  for (const tri of tris) {
+    g.fillStyle(tri.color, 1);
+    g.fillTriangle(tri.ax, tri.ay, tri.bx, tri.by, tri.cx, tri.cy);
+  }
 }
 
 // ─── Cliff face drawing ───────────────────────────────────────────────────────

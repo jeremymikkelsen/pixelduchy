@@ -477,13 +477,24 @@ export class MapScene extends Phaser.Scene {
       for (const [key, d] of cluster.interiorDepth) depthMap.set(key, d);
     }
 
-    // Draw all mountain icons tile-by-tile, back-to-front (top row first)
-    // so icons on lower rows naturally overlap those on upper rows.
+    // Pass 1 — rounded hills (depth < 3): drawn first so peaks overlap them.
     for (let ty = 0; ty < height; ty++) {
       for (let tx = 0; tx < width; tx++) {
         if (tiles[ty][tx].type !== 'mountain') continue;
         const depth = depthMap.get(`${tx},${ty}`) ?? 0;
-        const rng   = makeRng((tx * 7919 + ty * 6271 + 42) >>> 0);
+        if (depth >= 3) continue;
+        const rng = makeRng((tx * 7919 + ty * 6271 + 42) >>> 0);
+        drawMountainTile(g, tx * TILE_SIZE, ty * TILE_SIZE, TILE_SIZE, depth, rng, season);
+      }
+    }
+
+    // Pass 2 — snow peaks (depth >= 3): drawn last, sits visually on top of hills.
+    for (let ty = 0; ty < height; ty++) {
+      for (let tx = 0; tx < width; tx++) {
+        if (tiles[ty][tx].type !== 'mountain') continue;
+        const depth = depthMap.get(`${tx},${ty}`) ?? 0;
+        if (depth < 3) continue;
+        const rng = makeRng((tx * 7919 + ty * 6271 + 42) >>> 0);
         drawMountainTile(g, tx * TILE_SIZE, ty * TILE_SIZE, TILE_SIZE, depth, rng, season);
       }
     }
@@ -854,32 +865,38 @@ function vegBroadleaf(
   p: VegPalette, rng: () => number,
 ) {
   // Drop shadow
+  g.fillStyle(0x000000, 0.22);
+  g.fillEllipse(cx + radius * 0.14, cy + radius * 0.22, radius * 2.2, radius * 1.30);
+  // Trunk — drawn before canopy so canopy overlaps it
+  const tw = radius * 0.14;
   g.fillStyle(0x000000, 0.20);
-  g.fillEllipse(cx + radius * 0.12, cy + radius * 0.18, radius * 2.0, radius * 1.2);
-  // Canopy base
+  g.fillRect(cx - tw + 2, cy + radius * 0.55 + 2, tw * 2, radius * 0.65);
+  g.fillStyle(p.trunk, 1.0);
+  g.fillRect(cx - tw, cy + radius * 0.55, tw * 2, radius * 0.65);
+  // Canopy base circle
   g.fillStyle(p.base, 1.0);
   g.fillCircle(cx, cy, radius);
-  // Midtone blobs
-  const blobs = 3 + Math.floor(rng() * 3);
+  // Many bubbly midtone blobs — cloud-puff look (inspired by tree-rock.jpg)
+  const blobs = 6 + Math.floor(rng() * 5);
   for (let i = 0; i < blobs; i++) {
     const ang = rng() * Math.PI * 2;
-    const d   = rng() * radius * 0.52;
-    const br  = radius * (0.28 + rng() * 0.34);
-    g.fillStyle(p.mid, 0.82);
+    const d   = rng() * radius * 0.62;
+    const br  = radius * (0.28 + rng() * 0.42);
+    g.fillStyle(p.mid, 0.76);
     g.fillCircle(cx + Math.cos(ang) * d, cy + Math.sin(ang) * d, br);
   }
-  // Specular highlight
-  g.fillStyle(p.hi, 0.50);
-  g.fillCircle(cx - radius * 0.32, cy - radius * 0.34, radius * 0.50);
-  // Depth shadow
-  g.fillStyle(0x000000, 0.28);
-  g.fillCircle(cx + radius * 0.28, cy + radius * 0.30, radius * 0.44);
-  // Trunk — drawn last so it shows below the canopy
-  const tw = radius * 0.13;
-  g.fillStyle(0x000000, 0.18);
-  g.fillRect(cx - tw + 2, cy + radius * 0.72 + 2, tw * 2, radius * 0.55);
-  g.fillStyle(p.trunk, 1.0);
-  g.fillRect(cx - tw, cy + radius * 0.72, tw * 2, radius * 0.55);
+  // Highlight blobs — brighter, upper-left cluster
+  const hiBlobs = 2 + Math.floor(rng() * 3);
+  for (let i = 0; i < hiBlobs; i++) {
+    const ang = rng() * Math.PI * 2;
+    const d   = rng() * radius * 0.44;
+    const br  = radius * (0.16 + rng() * 0.26);
+    g.fillStyle(p.hi, 0.55);
+    g.fillCircle(cx + Math.cos(ang) * d - radius * 0.14, cy + Math.sin(ang) * d - radius * 0.16, br);
+  }
+  // Depth shadow (bottom-right)
+  g.fillStyle(0x000000, 0.26);
+  g.fillCircle(cx + radius * 0.30, cy + radius * 0.32, radius * 0.42);
 }
 
 function vegConifer(
@@ -887,19 +904,39 @@ function vegConifer(
   cx: number, cy: number,
   rng: () => number, snow: boolean,
 ) {
-  const h = 52 + rng() * 26;
-  const w = h * 0.44;
-  g.fillStyle(0x000000, 0.18);
-  g.fillEllipse(cx + 4, cy + h * 0.42, w * 1.9, h * 0.38);
-  g.fillStyle(0x1a4a38, 1.0);
-  g.fillTriangle(cx, cy - h * 0.50, cx - w, cy + h * 0.42, cx + w, cy + h * 0.42);
-  g.fillStyle(0x2a6a50, 0.90);
-  g.fillTriangle(cx, cy - h * 0.48, cx - w * 0.70, cy + h * 0.26, cx + w * 0.70, cy + h * 0.26);
-  g.fillStyle(0x3e8860, 0.55);
-  g.fillTriangle(cx, cy - h * 0.46, cx - w * 0.36, cy, cx + w * 0.36, cy);
+  const h = 58 + rng() * 28;
+  const w = h * 0.50;
+  const peak = cy - h * 0.50;
+  // Shadow
+  g.fillStyle(0x000000, 0.20);
+  g.fillEllipse(cx + 4, cy + h * 0.42, w * 2.0, h * 0.34);
+  // 4 overlapping tiers — all share the same apex (christmas-tree profile)
+  // Drawn bottom-to-top so upper tiers overlap lower ones.
+  const TIERS = [
+    { yBase: cy + h * 0.44, wScale: 1.00 },
+    { yBase: cy + h * 0.24, wScale: 0.78 },
+    { yBase: cy + h * 0.06, wScale: 0.57 },
+    { yBase: cy - h * 0.14, wScale: 0.37 },
+  ];
+  for (const { yBase, wScale } of TIERS) {
+    const tw = w * wScale;
+    // Dark body
+    g.fillStyle(0x143828, 1.0);
+    g.fillTriangle(cx, peak, cx - tw, yBase, cx + tw, yBase);
+    // Left-lit face (upper-left light source)
+    g.fillStyle(0x2a6848, 0.90);
+    g.fillTriangle(cx, peak, cx - tw, yBase, cx, yBase);
+    // Specular gloss — upper-left corner of tier
+    g.fillStyle(0x42905e, 0.50);
+    g.fillTriangle(cx, peak, cx - tw * 0.55, yBase - h * 0.04, cx - tw * 0.06, peak + h * 0.08);
+  }
+  // Snow cap
   if (snow) {
-    g.fillStyle(0xe1eeff, 0.80);
-    g.fillTriangle(cx, cy - h * 0.50 + 2, cx - w * 0.50, cy - h * 0.14, cx + w * 0.50, cy - h * 0.14);
+    const sBase = cy - h * 0.16;
+    g.fillStyle(0xe2eeff, 0.88);
+    g.fillTriangle(cx, peak, cx - w * 0.40, sBase, cx + w * 0.40, sBase);
+    g.fillStyle(0xb8ccdf, 0.55);
+    g.fillTriangle(cx, peak, cx + w * 0.40, sBase, cx, sBase);
   }
 }
 
@@ -1399,17 +1436,34 @@ const MTN_PALETTES_WINTER: Array<{ dark: number; mid: number; hi: number }> = [
   { dark: 0x485868, mid: 0x6a7a8a, hi: 0x8898a8 },
 ];
 
-/** Smooth rounded hill — pure oval layers. */
+/** Linearly interpolates between two packed RGB hex colours. t ∈ [0,1]. */
+function lerpHex(a: number, b: number, t: number): number {
+  const ar = (a >> 16) & 0xff, ag = (a >> 8) & 0xff, ab = a & 0xff;
+  const br = (b >> 16) & 0xff, bg = (b >> 8) & 0xff, bb = b & 0xff;
+  return (Math.round(ar + (br - ar) * t) << 16)
+       | (Math.round(ag + (bg - ag) * t) << 8)
+       |  Math.round(ab + (bb - ab) * t);
+}
+
+/** Smooth rounded hill with rock crack texture — no snow. */
 function drawRoundedHillVar(
   g: Phaser.GameObjects.Graphics,
   cx: number, cy: number,
   radius: number, ry: number,
   pal: { dark: number; mid: number; hi: number },
   rng: () => number,
+  season: number,
 ): void {
+  // Shadow
   g.fillStyle(0x000000, 0.20);
   g.fillEllipse(cx + radius * 0.20, cy + ry * 0.28, radius * 2.3, ry * 1.3);
 
+  // Green grass / moss at base — like tree-rock.jpg
+  const grassCol = season === 2 ? 0x8a7030 : season === 3 ? 0x566050 : 0x3e6a28;
+  g.fillStyle(grassCol, 0.65);
+  g.fillEllipse(cx + radius * 0.06, cy + ry * 0.22, radius * 2.2, ry * 1.50);
+
+  // Rock body — dark base, mid highlight, lit specular
   g.fillStyle(pal.dark, 1.0);
   g.fillEllipse(cx, cy, radius * 2.0, ry * 2.0);
 
@@ -1419,79 +1473,99 @@ function drawRoundedHillVar(
   g.fillStyle(pal.hi, 0.55);
   g.fillEllipse(cx - radius * 0.30, cy - ry * 0.34, radius * 0.82, ry * 0.67);
 
-  // Subtle gloss on top
+  // Rock crack / crevice lines for texture (like tree-rock.jpg)
+  const crackCount = 2 + Math.floor(rng() * 3);
+  for (let c = 0; c < crackCount; c++) {
+    const sx = cx + (rng() - 0.5) * radius * 0.90;
+    const sy = cy - ry * (0.05 + rng() * 0.55);
+    const ex = sx + (rng() - 0.5) * radius * 0.60;
+    const ey = sy + ry * (0.25 + rng() * 0.50);
+    g.lineStyle(1.4, 0x18161e, 0.38);
+    g.lineBetween(sx, sy, ex, ey);
+  }
+
+  // Subtle gloss on upper-left
   g.fillStyle(0xffffff, 0.07 + rng() * 0.06);
   g.fillEllipse(cx - radius * 0.18, cy - ry * 0.44, radius * 0.50, ry * 0.33);
 }
 
-/** Angular polygon hill with rock strata — no snow, faceted look. */
-
-/** Pointed snow-capped peak (angular polygon + pointed snow patch). */
-function drawPointyPeakVar(
+/**
+ * Low-poly faceted mountain peak with snow cap.
+ * N=7 triangular faces radiate from a jittered apex to a jittered base ring.
+ * Each face is shaded by its angle relative to an upper-left light source,
+ * producing the distinct multi-face look seen in mountain9/mountain10 reference.
+ * The snow cap is a second smaller cone drawn from the same apex.
+ */
+function drawSnowPeak(
   g: Phaser.GameObjects.Graphics,
   cx: number, cy: number,
-  radius: number, ry: number,
-  pal: { dark: number; mid: number; hi: number },
+  radius: number,
   rng: () => number,
   season: number,
 ): void {
-  const snowLit = season === 3 ? 0xf2f4f8 : 0xf4f2ea;
-  const snowSh  = season === 3 ? 0xc8d4e2 : 0xd2d6d0;
-  const j = (v: number) => v + (rng() - 0.5) * radius * 0.05;
+  const LIGHT = -Math.PI * 0.75; // upper-left light direction
+  const N = 7;
+  const ry    = radius * 0.46;
+  const peakX = cx + (rng() - 0.5) * radius * 0.08;
+  const peakY = cy - ry * 0.88;
 
-  g.fillStyle(0x000000, 0.22);
-  g.fillEllipse(cx + radius * 0.18, cy + ry * 0.28, radius * 2.5, ry * 1.35);
+  // Jitter base ring vertices around the mountain foot
+  const base: { x: number; y: number }[] = [];
+  for (let i = 0; i < N; i++) {
+    const a   = (i / N) * Math.PI * 2 - Math.PI / 2;
+    const jit = 0.82 + rng() * 0.36;
+    base.push({
+      x: cx + Math.cos(a) * radius * jit,
+      y: cy + Math.sin(a) * ry * jit * 0.55 + ry * 0.55,
+    });
+  }
 
-  const body = [
-    { x: cx,                     y: cy - ry * 0.96 },
-    { x: cx + j(radius * 0.26), y: cy - ry * 0.40 },
-    { x: cx + j(radius * 0.68), y: cy + ry * 0.12 },
-    { x: cx + j(radius * 0.54), y: cy + ry * 0.62 },
-    { x: cx,                     y: cy + ry * 0.80 },
-    { x: cx - j(radius * 0.54), y: cy + ry * 0.62 },
-    { x: cx - j(radius * 0.68), y: cy + ry * 0.12 },
-    { x: cx - j(radius * 0.26), y: cy - ry * 0.40 },
-  ];
-  g.fillStyle(pal.dark, 1.0);
-  g.fillPoints(body, true);
+  // Shadow ellipse
+  g.fillStyle(0x000000, 0.26);
+  g.fillEllipse(cx + radius * 0.14, cy + ry * 1.12, radius * 2.2, ry * 1.15);
 
-  g.fillStyle(pal.mid, 0.88);
-  g.fillPoints([
-    body[0], body[7], body[6],
-    { x: cx - radius * 0.06, y: cy + ry * 0.18 },
-    { x: cx + radius * 0.08, y: cy - ry * 0.28 },
-  ], true);
+  // Green grass / moss at base
+  const grassCol = season === 2 ? 0x9a7838 : season === 3 ? 0x5e7050 : 0x426e2e;
+  g.fillStyle(grassCol, 0.72);
+  g.fillEllipse(cx, cy + ry * 0.50, radius * 2.0, ry * 1.10);
 
-  g.fillStyle(pal.hi, 0.52);
-  g.fillPoints([
-    body[0], body[7],
-    { x: cx - radius * 0.14, y: cy - ry * 0.28 },
-    { x: cx - radius * 0.02, y: cy - ry * 0.68 },
-  ], true);
+  // Rock body — N triangular faces, each shaded by light angle
+  const ROCK_DARK  = 0x2e3038;
+  const ROCK_LIGHT = 0x82828c;
+  for (let i = 0; i < N; i++) {
+    const b0 = base[i], b1 = base[(i + 1) % N];
+    const mx = (b0.x + b1.x) / 2, my = (b0.y + b1.y) / 2;
+    const t  = Math.cos(Math.atan2(my - peakY, mx - peakX) - LIGHT) * 0.5 + 0.5;
+    g.fillStyle(lerpHex(ROCK_DARK, ROCK_LIGHT, t), 1.0);
+    g.fillPoints([{ x: peakX, y: peakY }, b0, b1], true);
+  }
 
-  // Snow: pointed patch from peak to shoulder level
-  g.fillStyle(snowLit, 0.92);
-  g.fillPoints([
-    { x: cx,                  y: cy - ry * 0.96 },
-    { x: cx + radius * 0.22, y: cy - ry * 0.34 },
-    { x: cx + radius * 0.06, y: cy - ry * 0.18 },
-    { x: cx - radius * 0.06, y: cy - ry * 0.18 },
-    { x: cx - radius * 0.24, y: cy - ry * 0.36 },
-  ], true);
+  // Crack / crevice edge lines between faces
+  g.lineStyle(1.8, 0x161820, 0.50);
+  for (let i = 0; i < N; i++) {
+    g.lineBetween(peakX, peakY, base[i].x, base[i].y);
+  }
 
-  g.fillStyle(snowSh, 0.62);
-  g.fillPoints([
-    { x: cx,                  y: cy - ry * 0.96 },
-    { x: cx + radius * 0.22, y: cy - ry * 0.34 },
-    { x: cx + radius * 0.06, y: cy - ry * 0.18 },
-    { x: cx + radius * 0.02, y: cy - ry * 0.52 },
-  ], true);
+  // Snow cap — a smaller cone from the same apex, covering ~34% of the height
+  const SNOW_DARK  = season === 3 ? 0xaabece : 0xbcbab4;
+  const SNOW_LIGHT = season === 3 ? 0xdce8f8 : 0xf0ede8;
+  const snowBase = base.map(b => ({
+    x: peakX + (b.x - peakX) * 0.34,
+    y: peakY + (b.y - peakY) * 0.34,
+  }));
+  for (let i = 0; i < N; i++) {
+    const b0 = snowBase[i], b1 = snowBase[(i + 1) % N];
+    const mx = (b0.x + b1.x) / 2, my = (b0.y + b1.y) / 2;
+    const t  = Math.cos(Math.atan2(my - peakY, mx - peakX) - LIGHT) * 0.5 + 0.5;
+    g.fillStyle(lerpHex(SNOW_DARK, SNOW_LIGHT, t), 0.96);
+    g.fillPoints([{ x: peakX, y: peakY }, b0, b1], true);
+  }
 }
 
 /**
  * Draws one mountain icon on the tile at pixel (px, py).
- * Radius is 0.65–2.15 × TILE_SIZE so icons bleed into neighbouring tiles
- * and overlap each other, forming natural-looking mountain masses.
+ * depth < 3  → rounded hill (foothills, no snow)
+ * depth >= 3 → large faceted snow peak spanning multiple tiles
  */
 function drawMountainTile(
   g: Phaser.GameObjects.Graphics,
@@ -1501,23 +1575,21 @@ function drawMountainTile(
   rng: () => number,
   season: number,
 ): void {
-  const depthFactor = Math.min(1, depth / 4);
-  const radius = TS * (0.65 + depthFactor * 0.90 + rng() * 0.60); // 0.65–2.15 × TS
-  const ry     = radius * (0.50 + rng() * 0.16);                   // varied aspect
-
-  const palettes = season === 3 ? MTN_PALETTES_WINTER : MTN_PALETTES;
-  const pal = palettes[Math.floor(rng() * palettes.length)];
-
-  const hasSnow   = depth >= 3 && rng() < 0.75;
-  const usePointy = hasSnow && rng() < 0.62;
-
   // Jitter centre so adjacent icons don't align to the grid
   const cx = px + TS * 0.5 + (rng() - 0.5) * TS * 0.22;
   const cy = py + TS * 0.5 + (rng() - 0.5) * TS * 0.22;
 
-  if (usePointy) {
-    drawPointyPeakVar(g, cx, cy, radius, ry, pal, rng, season);
+  if (depth >= 3) {
+    // Large faceted snow peak — radius spans 2–3 tiles
+    const radius = TS * (2.0 + rng() * 1.2);
+    drawSnowPeak(g, cx, cy, radius, rng, season);
   } else {
-    drawRoundedHillVar(g, cx, cy, radius, ry, pal, rng);
+    // Rounded foothill — size scales with depth
+    const depthFactor = Math.min(1, depth / 2);
+    const radius = TS * (0.65 + depthFactor * 0.80 + rng() * 0.45);
+    const ry     = radius * (0.50 + rng() * 0.16);
+    const palettes = season === 3 ? MTN_PALETTES_WINTER : MTN_PALETTES;
+    const pal = palettes[Math.floor(rng() * palettes.length)];
+    drawRoundedHillVar(g, cx, cy, radius, ry, pal, rng, season);
   }
 }

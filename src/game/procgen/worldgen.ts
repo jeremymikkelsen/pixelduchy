@@ -54,7 +54,7 @@ function valueNoise(width: number, height: number, rng: () => number, scale: num
 
 // ─── Tile classification ──────────────────────────────────────────────────────
 
-function classifyTile(elevation: number, moisture: number, distToEdge: number): TileType {
+function classifyTile(elevation: number, moisture: number, distToEdge: number, mountainThreshold: number): TileType {
   // Quadratic falloff: suppresses elevation near edges → guaranteed ocean border,
   // single cohesive landmass, no inland seas.
   const falloff = Math.pow(1 - distToEdge, 2) * 1.2;
@@ -62,7 +62,7 @@ function classifyTile(elevation: number, moisture: number, distToEdge: number): 
 
   if (e < 0.25) return 'ocean';    // covers distToEdge ≤ ~0.22 → always ocean
   if (e < 0.34) return 'coast';
-  if (elevation > 0.72) return 'mountain'; // raw-elevation threshold (no falloff adjustment needed)
+  if (elevation > mountainThreshold) return 'mountain';
   if (moisture > 0.74) return 'wetland';
   if (moisture > 0.45) return 'forest';
   if (moisture < 0.25) return 'desert';
@@ -121,6 +121,11 @@ export function generateWorld({ width, height, seed }: WorldGenOptions): WorldMa
   const elevation = valueNoise(width, height, rng, 8);
   const moisture  = valueNoise(width, height, rng, 6);
 
+  // Cap mountains at ≤10% of total tiles by computing the elevation value at
+  // the 90th percentile across all tiles and using that as the lower bound.
+  const sortedElev = elevation.flat().sort((a, b) => a - b);
+  const mountainThreshold = Math.max(0.72, sortedElev[Math.floor(sortedElev.length * 0.90)]);
+
   const tiles: Tile[][] = [];
 
   for (let y = 0; y < height; y++) {
@@ -132,7 +137,7 @@ export function generateWorld({ width, height, seed }: WorldGenOptions): WorldMa
 
       const e = elevation[y][x];
       const m = moisture[y][x];
-      const type = classifyTile(e, m, distToEdge);
+      const type = classifyTile(e, m, distToEdge, mountainThreshold);
 
       const resource    = resolveTileResource(type, rng);
       const hasResource = resource !== null && rng() < 0.35;

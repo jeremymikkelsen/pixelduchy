@@ -1307,65 +1307,123 @@ function computeMountainClusters(
 
 
 
-// ─── Mountain icon renderer ───────────────────────────────────────────────────
-//
-//  Each mountain tile gets 1–4 stacked "bump" icons drawn in painter's order
-//  (back row first → front row on top).  Each bump is:
-//    1. A dark drop-shadow ellipse (offset right+down)
-//    2. A squashed base ellipse (the body of the hill — darkest tone)
-//    3. A lighter mid-face ellipse (lit from upper-left)
-//    4. A highlight spot (upper-left, lightest)
-//    5. Optional snow cap (two layered ellipses at the peak)
-//
-//  Icon count / size / snow presence scales with BFS interior depth so edge
-//  tiles look like gentle foothills and deep tiles look like tall peaks.
 
-/** Draws one mountain bump icon centred at (cx, cy). */
-function drawMountainBump(
+// ─── Mountain icon renderer ───────────────────────────────────────────────────
+//  5 tiers driven by BFS interior depth:
+//    Tier 0 – tiny foothill   (rounded, no snow)
+//    Tier 1 – small hill      (rounded, no snow)
+//    Tier 2 – medium hill     (rounded, no snow)
+//    Tier 3 – large peak      (angular, pointed, snow cap)
+//    Tier 4 – tall peak       (angular, pointed, large snow cap)
+//  One icon per tile, sized to fill it (~0.36–0.60 × TILE_SIZE radius).
+
+/** Rounded oval hill icon for tiers 0–2 (no snow). */
+function drawRoundedHill(
   g: Phaser.GameObjects.Graphics,
   cx: number, cy: number,
   radius: number,
-  hasSnow: boolean,
+  season: number,
+): void {
+  const winter   = season === 3;
+  const rockBase = winter ? 0x525e6e : 0x524a42;
+  const rockMid  = winter ? 0x7a8ea0 : 0x7a6e5e;
+  const rockHi   = winter ? 0xa8bac8 : 0x9e9080;
+  const ry       = radius * 0.58;
+
+  // Drop shadow
+  g.fillStyle(0x000000, 0.22);
+  g.fillEllipse(cx + radius * 0.18, cy + ry * 0.26, radius * 2.4, ry * 1.35);
+  // Dark base
+  g.fillStyle(rockBase, 1.0);
+  g.fillEllipse(cx, cy, radius * 2.0, ry * 2.0);
+  // Lit mid-face (upper-centre, light from upper-left)
+  g.fillStyle(rockMid, 0.85);
+  g.fillEllipse(cx - radius * 0.14, cy - ry * 0.16, radius * 1.55, ry * 1.36);
+  // Highlight
+  g.fillStyle(rockHi, 0.55);
+  g.fillEllipse(cx - radius * 0.30, cy - ry * 0.34, radius * 0.82, ry * 0.67);
+  // Subtle top gloss
+  g.fillStyle(0xffffff, 0.10);
+  g.fillEllipse(cx - radius * 0.18, cy - ry * 0.44, radius * 0.52, ry * 0.34);
+}
+
+/** Angular pointed peak icon for tiers 3–4 with snow cap. */
+function drawPointyPeak(
+  g: Phaser.GameObjects.Graphics,
+  cx: number, cy: number,
+  radius: number,
+  rng: () => number,
   season: number,
 ): void {
   const winter    = season === 3;
-  const rockDark  = winter ? 0x525e6e : 0x524a42;
-  const rockMid   = winter ? 0x7a8ea0 : 0x7a6e5e;
-  const rockLight = winter ? 0xa8bac8 : 0x9e9080;
-  const snowLit   = winter ? 0xf2f4f8 : 0xf2f0e8;
-  const snowSh    = winter ? 0xccd8e4 : 0xd8dcd8;
+  const rockDark  = winter ? 0x505e70 : 0x4e4840;
+  const rockMid   = winter ? 0x788ca0 : 0x786a58;
+  const rockLight = winter ? 0xa6bac8 : 0x9c8e7c;
+  const snowLit   = winter ? 0xf2f4f8 : 0xf4f2ea;
+  const snowSh    = winter ? 0xc8d4e2 : 0xd2d6d0;
+  const ry        = radius * 0.60;
+  const j = (v: number) => v + (rng() - 0.5) * radius * 0.05; // tiny ridge jitter
 
-  const ry = radius * 0.62;   // vertical squash for top-down perspective
+  // Drop shadow
+  g.fillStyle(0x000000, 0.22);
+  g.fillEllipse(cx + radius * 0.18, cy + ry * 0.28, radius * 2.5, ry * 1.35);
 
-  // 1. Drop shadow
-  g.fillStyle(0x000000, 0.20);
-  g.fillEllipse(cx + radius * 0.20, cy + ry * 0.26, radius * 2.2, ry * 1.3);
-
-  // 2. Base body (darkest — represents the unlit slopes)
+  // Body polygon: pointed top vertex, angular sides, rounded base
+  const body = [
+    { x: cx,                     y: cy - ry * 0.96 },  // peak tip
+    { x: cx + j(radius * 0.26), y: cy - ry * 0.40 },  // right shoulder
+    { x: cx + j(radius * 0.68), y: cy + ry * 0.12 },  // right mid
+    { x: cx + j(radius * 0.54), y: cy + ry * 0.62 },  // right base
+    { x: cx,                     y: cy + ry * 0.80 },  // bottom centre
+    { x: cx - j(radius * 0.54), y: cy + ry * 0.62 },  // left base
+    { x: cx - j(radius * 0.68), y: cy + ry * 0.12 },  // left mid
+    { x: cx - j(radius * 0.26), y: cy - ry * 0.40 },  // left shoulder
+  ];
   g.fillStyle(rockDark, 1.0);
-  g.fillEllipse(cx, cy, radius * 2.0, ry * 2.0);
+  g.fillPoints(body, true);
 
-  // 3. Mid lit face (covers most of upper-centre)
-  g.fillStyle(rockMid, 0.85);
-  g.fillEllipse(cx - radius * 0.12, cy - ry * 0.16, radius * 1.50, ry * 1.30);
+  // Lit left face (from peak → left shoulder → inner centre → upper centre)
+  g.fillStyle(rockMid, 0.88);
+  g.fillPoints([
+    body[0],
+    body[7],
+    body[6],
+    { x: cx - radius * 0.06, y: cy + ry * 0.18 },
+    { x: cx + radius * 0.08, y: cy - ry * 0.28 },
+  ], true);
 
-  // 4. Highlight (upper-left)
-  g.fillStyle(rockLight, 0.55);
-  g.fillEllipse(cx - radius * 0.30, cy - ry * 0.34, radius * 0.85, ry * 0.68);
+  // Highlight strip along the left ridgeline
+  g.fillStyle(rockLight, 0.52);
+  g.fillPoints([
+    body[0],
+    body[7],
+    { x: cx - radius * 0.14, y: cy - ry * 0.28 },
+    { x: cx - radius * 0.02, y: cy - ry * 0.68 },
+  ], true);
 
-  // 5. Snow cap
-  if (hasSnow) {
-    g.fillStyle(snowLit, 0.92);
-    g.fillEllipse(cx - radius * 0.05, cy - ry * 0.42, radius * 0.80, ry * 0.50);
-    g.fillStyle(snowSh, 0.55);
-    g.fillEllipse(cx + radius * 0.14, cy - ry * 0.30, radius * 0.40, ry * 0.26);
-  }
+  // Snow: pointed patch from peak down to shoulder level
+  g.fillStyle(snowLit, 0.92);
+  g.fillPoints([
+    { x: cx,                  y: cy - ry * 0.96 },  // peak
+    { x: cx + radius * 0.22, y: cy - ry * 0.34 },  // right snow edge
+    { x: cx + radius * 0.06, y: cy - ry * 0.18 },  // right snow low
+    { x: cx - radius * 0.06, y: cy - ry * 0.18 },  // left snow low
+    { x: cx - radius * 0.24, y: cy - ry * 0.36 },  // left snow edge
+  ], true);
+
+  // Snow shadow on right side of snow
+  g.fillStyle(snowSh, 0.62);
+  g.fillPoints([
+    { x: cx,                  y: cy - ry * 0.96 },
+    { x: cx + radius * 0.22, y: cy - ry * 0.34 },
+    { x: cx + radius * 0.06, y: cy - ry * 0.18 },
+    { x: cx + radius * 0.02, y: cy - ry * 0.52 },
+  ], true);
 }
 
 /**
- * Draws mountain icons on a single tile at pixel position (px, py).
- * `depth` is the BFS interior depth (0 = edge tile, higher = further inside
- * the cluster).  Icons are generated deterministically from `rng`.
+ * Draws one mountain icon on the tile at pixel position (px, py).
+ * Tier 0-2 → rounded hill; tier 3-4 → pointed snow-capped peak.
  */
 function drawMountainTile(
   g: Phaser.GameObjects.Graphics,
@@ -1375,30 +1433,17 @@ function drawMountainTile(
   rng: () => number,
   season: number,
 ): void {
-  const cx = px + TS * 0.5;
-  const cy = py + TS * 0.5;
+  const tier = Math.min(4, depth);
+  // Radii sized to fill the tile; tier 4 bleeds slightly into neighbours
+  const RADII = [TS * 0.36, TS * 0.43, TS * 0.50, TS * 0.54, TS * 0.61];
+  const radius = RADII[tier] * (0.90 + rng() * 0.18);
+  // Tiny centre jitter so adjacent icons don't look grid-locked
+  const cx = px + TS * 0.5 + (rng() - 0.5) * TS * 0.06;
+  const cy = py + TS * 0.5 + (rng() - 0.5) * TS * 0.06;
 
-  // Scale icon size and count with depth
-  const count      = depth === 0 ? 1 + Math.floor(rng() * 2)   // 1-2 small foothills
-                   : depth === 1 ? 2 + Math.floor(rng() * 2)   // 2-3 medium hills
-                   :               2 + Math.floor(rng() * 3);  // 2-4 large peaks
-  const baseRadius = depth === 0 ? TS * 0.20
-                   : depth === 1 ? TS * 0.27
-                   :               TS * 0.33;
-  const hasSnow    = depth >= 3 || (depth === 2 && rng() < 0.6) || (depth === 1 && rng() < 0.20);
-
-  // Build list of icon positions, then sort back-to-front (ascending y)
-  const icons: { x: number; y: number; r: number }[] = [];
-  for (let i = 0; i < count; i++) {
-    icons.push({
-      x: cx + (rng() - 0.5) * TS * 0.52,
-      y: cy + (rng() - 0.5) * TS * 0.42,
-      r: baseRadius * (0.72 + rng() * 0.52),
-    });
-  }
-  icons.sort((a, b) => a.y - b.y);
-
-  for (const ic of icons) {
-    drawMountainBump(g, ic.x, ic.y, ic.r, hasSnow, season);
+  if (tier <= 2) {
+    drawRoundedHill(g, cx, cy, radius, season);
+  } else {
+    drawPointyPeak(g, cx, cy, radius, rng, season);
   }
 }

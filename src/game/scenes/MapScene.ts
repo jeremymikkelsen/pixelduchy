@@ -1401,15 +1401,18 @@ function generateMountainData(
 
       let ridgeWave = 0, ridgeNorm = 0;
       for (const rp of ridgeParams) {
-        ridgeWave += rp.amp * Math.sin(angle * rp.freq + rp.phase + radial * rp.freq * 1.35);
+        const s = Math.sin(angle * rp.freq + rp.phase + radial * rp.freq * 1.35);
+        // Ridged noise: sharp positive spikes at ridge crests, deep cuts between.
+        // pow(|s|, 0.35) makes the taper from ridge to valley very steep.
+        ridgeWave += rp.amp * ((1 - Math.pow(Math.abs(s), 0.35)) * 2 - 1);
         ridgeNorm += Math.abs(rp.amp);
       }
       if (ridgeNorm > 0) ridgeWave /= ridgeNorm;
-      // Higher ridgeStrength (0.65 vs 0.30) → distinct peaks and saddles emerge
-      const ridgeProfile = 1 + 0.65 * ridgeWave * Math.pow(Math.max(0, 1 - radial), 0.55);
+      const ridgeProfile = 1 + 0.80 * ridgeWave * Math.pow(Math.max(0, 1 - radial), 0.50);
 
-      const gullyWave = Math.sin(angle * 22 + radial * 15 + seed * 0.0000027);
-      const gullyDepth = 0.11 * Math.pow(Math.abs(gullyWave), 2.25) * Math.max(0, 1 - radial);
+      // Deeper gullies for more dramatic inter-ridge cuts
+      const gullyWave = Math.sin(angle * 26 + radial * 14 + seed * 0.0000027);
+      const gullyDepth = 0.18 * Math.pow(Math.abs(gullyWave), 1.8) * Math.max(0, 1 - radial);
 
       let h = base * ridgeProfile - gullyDepth;
       for (const sp of subPeaks) {
@@ -1421,19 +1424,16 @@ function generateMountainData(
     }
   }
 
-  // ── 3×3 weighted blur (reduces aliasing on the triangle mesh)
+  // ── Minimal blur: just 4-neighbour average (light enough to kill aliasing
+  //    without smoothing away the sharp ridge peaks we just generated).
   for (let y = 0; y < gridH; y++) {
     for (let x = 0; x < gridW; x++) {
-      let total = 0, wsum = 0;
-      for (let oy = -1; oy <= 1; oy++) {
-        const ny = y + oy; if (ny < 0 || ny >= gridH) continue;
-        for (let ox = -1; ox <= 1; ox++) {
-          const nx = x + ox; if (nx < 0 || nx >= gridW) continue;
-          const w = (ox === 0 && oy === 0) ? 2 : 1;
-          total += raw[ny * gridW + nx] * w; wsum += w;
-        }
-      }
-      smooth[y * gridW + x] = total / wsum;
+      const c  = raw[y * gridW + x];
+      const xm = x > 0       ? raw[y * gridW + (x - 1)] : c;
+      const xp = x < gridW-1 ? raw[y * gridW + (x + 1)] : c;
+      const ym = y > 0       ? raw[(y - 1) * gridW + x] : c;
+      const yp = y < gridH-1 ? raw[(y + 1) * gridW + x] : c;
+      smooth[y * gridW + x] = (c * 4 + xm + xp + ym + yp) / 8;
     }
   }
 
@@ -1520,10 +1520,9 @@ function renderMountainProjection(
   // the cluster's tile bounding box in screen space.
   const xScale      = clusterPixW / (width + height);
   const yScale      = clusterPixH / (width + height);
-  // +50% from previous — base it on the inner cluster size (without padding)
-  // so a single-tile cluster still gets a visible bump, not a giant spike.
+  // ~3x vertical exaggeration for jagged peak silhouettes.
   const innerPx = Math.min(clusterPixW, clusterPixH) - 2 * TILE_SIZE;
-  const heightScale = Math.max(TILE_SIZE * 0.18, innerPx * 0.105);
+  const heightScale = Math.max(TILE_SIZE * 0.5, innerPx * 0.32);
 
   // Seasonal palette
   const rockDark:  MtnRGB = season === 3 ? [72,78,90]    : [54,52,58];

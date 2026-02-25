@@ -380,6 +380,13 @@ export class MapScene extends Phaser.Scene {
         const layoutRng = makeRng((tx * 3571 + ty * 4297 + 13) >>> 0);
         const visualRng = makeRng((tx * 7919 + ty * 6271 + season * 1013) >>> 0);
 
+        // Elevation-driven forest subtype:
+        //   > 0.62 → conifer only   (high-elevation boreal)
+        //   0.50–0.62 → mixed       (~60 % conifer, 40 % broadleaf)
+        //   < 0.50 → deciduous only (lowland)
+        const tileElev = tiles[ty][tx].elevation;
+        const coniferChance = tileElev > 0.62 ? 1.0 : tileElev > 0.50 ? 0.60 : 0.0;
+
         const count = 3 + Math.floor(layoutRng() * 3);
         for (let i = 0; i < count; i++) {
           const wx = (tx + layoutRng() * 1.08 - 0.04) * TS;
@@ -389,7 +396,7 @@ export class MapScene extends Phaser.Scene {
           const wType = tiles[wty]?.[wtx]?.type;
           if (wType === 'coast' || wType === 'ocean') continue;
 
-          const isConifer = layoutRng() < 0.28;
+          const isConifer = layoutRng() < coniferChance;
           const radius    = 26 + layoutRng() * 22;
           if (isConifer) {
             vegConifer(g, wx, wy, visualRng, season === 3);

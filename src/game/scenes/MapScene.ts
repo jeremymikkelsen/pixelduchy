@@ -464,8 +464,9 @@ export class MapScene extends Phaser.Scene {
       const mtnData = generateMountainData(clusterW, clusterH, seed, cluster.tier);
       const anchorX = (minTX + clusterW * 0.5) * TILE_SIZE;
       const anchorY = (maxTY + 1) * TILE_SIZE;
-      const footprintPx = Math.max(clusterW, 2) * TILE_SIZE * 1.5;
-      renderMountainProjection(g, mtnData, anchorX, anchorY, footprintPx, season);
+      const clusterPixW = clusterW * TILE_SIZE;
+      const clusterPixH = clusterH * TILE_SIZE;
+      renderMountainProjection(g, mtnData, anchorX, anchorY, clusterPixW, clusterPixH, season);
 
       // Stone cliffs on ocean/coast-facing edges (drawn on top of the projection).
       for (const pt of cluster.tiles) {
@@ -1352,24 +1353,25 @@ function generateMountainData(
   const radiusX = gridW * 0.44;
   const radiusY = gridH * 0.42;
 
-  // Ridge octave params (5 octaves of sinusoidal angular ridges)
+  // Ridge octave params — more octaves + higher strength → system of ridges
+  // instead of a single smooth dome. Lower frequency step keeps ridges broader.
   const ridgeParams: { amp: number; freq: number; phase: number }[] = [];
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 7; i++) {
     ridgeParams.push({
-      amp:   Math.pow(0.62, i) * (0.65 + rng() * 0.50),
-      freq:  2 + i * 1.7 + (rng() - 0.5) * 0.44,
+      amp:   Math.pow(0.58, i) * (0.70 + rng() * 0.50),
+      freq:  1.5 + i * 1.2 + (rng() - 0.5) * 0.36,
       phase: rng() * TAU,
     });
   }
 
-  // Sub-peaks (2–4 bumps scattered within the cluster radius)
-  const nPeaks = 2 + Math.floor(rng() * 3);
+  // More sub-peaks scattered across the radius to create a range of summits
+  const nPeaks = 3 + Math.floor(rng() * 5);
   const subPeaks: { px: number; py: number; r: number }[] = [];
   for (let i = 0; i < nPeaks; i++) {
     subPeaks.push({
-      px: cx + (rng() - 0.5) * 0.70 * radiusX,
-      py: cy + (rng() - 0.5) * 0.56 * radiusY,
-      r:  0.36 + rng() * 0.26,
+      px: cx + (rng() - 0.5) * 0.85 * radiusX,
+      py: cy + (rng() - 0.5) * 0.75 * radiusY,
+      r:  0.28 + rng() * 0.42,
     });
   }
 
@@ -1392,7 +1394,8 @@ function generateMountainData(
 
       const angle = Math.atan2(dyw, dxw);
       let base = Math.max(0, 1 - radial);
-      base = Math.pow(base, 1.45) * (1 + 0.23 * Math.exp(-radial * 4));
+      // Lower power → flatter plateau so ridges can compete with the base.
+      base = Math.pow(base, 0.75) * (1 + 0.18 * Math.exp(-radial * 3));
 
       let ridgeWave = 0, ridgeNorm = 0;
       for (const rp of ridgeParams) {
@@ -1400,7 +1403,8 @@ function generateMountainData(
         ridgeNorm += Math.abs(rp.amp);
       }
       if (ridgeNorm > 0) ridgeWave /= ridgeNorm;
-      const ridgeProfile = 1 + 0.30 * ridgeWave * Math.pow(Math.max(0, 1 - radial), 0.65);
+      // Higher ridgeStrength (0.65 vs 0.30) → distinct peaks and saddles emerge
+      const ridgeProfile = 1 + 0.65 * ridgeWave * Math.pow(Math.max(0, 1 - radial), 0.55);
 
       const gullyWave = Math.sin(angle * 22 + radial * 15 + seed * 0.0000027);
       const gullyDepth = 0.11 * Math.pow(Math.abs(gullyWave), 2.25) * Math.max(0, 1 - radial);
@@ -1504,14 +1508,18 @@ function renderMountainProjection(
   g: Phaser.GameObjects.Graphics,
   data: MountainGenData,
   anchorX: number, anchorY: number,
-  footprintPx: number,
+  clusterPixW: number,   // cluster width  in world pixels (clusterW  * TILE_SIZE)
+  clusterPixH: number,   // cluster height in world pixels (clusterH * TILE_SIZE)
   season: number,
 ): void {
   const { width, height, heightMap, shadeMap, seed, snowLine, foothillThreshold } = data;
   const gcx = (width - 1) * 0.5, gcy = (height - 1) * 0.5;
-  const xScale     = footprintPx / (width + height);
-  const yScale     = footprintPx * 0.48 / (width + height);
-  const heightScale = footprintPx * 0.55;
+  // xScale / yScale derived independently so the base footprint exactly covers
+  // the cluster's tile bounding box in screen space.
+  const xScale      = clusterPixW / (width + height);
+  const yScale      = clusterPixH / (width + height);
+  // ~10× less height than before — appropriate for a top-down view
+  const heightScale = Math.min(clusterPixW, clusterPixH) * 0.07;
 
   // Seasonal palette
   const rockDark:  MtnRGB = season === 3 ? [72,78,90]    : [54,52,58];

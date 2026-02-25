@@ -436,21 +436,33 @@ export class MapScene extends Phaser.Scene {
 
   // ─── Mountain peaks ───────────────────────────────────────────────────────────
 
-  /** Bakes mountain overlays using a Voronoi graph approach (Amit Patel style).
-   *  Each connected mountain cluster is divided into Voronoi cells; each cell's
-   *  elevation is driven by interior depth + a per-cell bias.  Tiles are flat-
-   *  shaded by elevation (dark rock → light rock → snow) and contour strokes are
-   *  drawn on edges where elevation drops significantly. Pure 2D top-down view. */
+  /** Bakes mountain overlays as stacked 2-D top-down hill icons — same
+   *  approach as beach/vegetation: overlapping organic shapes drawn once into
+   *  a RenderTexture and replayed as a single quad every frame.
+   *
+   *  Icon density and size scale with BFS interior depth so edge tiles show
+   *  small foothills and deep interior tiles show large snow-capped peaks. */
   private renderMountains() {
     const g = this.make.graphics({}, false);
-    const { tiles } = this.world;
-    const clusters = computeMountainClusters(tiles, this.world.width, this.world.height);
+    const { tiles, width, height } = this.world;
+    const clusters = computeMountainClusters(tiles, width, height);
     const season = this.currentSeasonIndex;
 
+    // Collect depth for every mountain tile across all clusters.
+    const depthMap = new Map<string, number>();
     for (const cluster of clusters) {
-      const seed = (cluster.mainSummit.x * 7919 + cluster.mainSummit.y * 6271) >>> 0;
-      const elevation = buildMtnVoronoi(cluster.tiles, cluster.interiorDepth, cluster.maxDepth, seed);
-      renderMtnVoronoi(g, cluster.tiles, elevation, season, seed);
+      for (const [key, d] of cluster.interiorDepth) depthMap.set(key, d);
+    }
+
+    // Draw all mountain icons tile-by-tile, back-to-front (top row first)
+    // so icons on lower rows naturally overlap those on upper rows.
+    for (let ty = 0; ty < height; ty++) {
+      for (let tx = 0; tx < width; tx++) {
+        if (tiles[ty][tx].type !== 'mountain') continue;
+        const depth = depthMap.get(`${tx},${ty}`) ?? 0;
+        const rng   = makeRng((tx * 7919 + ty * 6271 + 42) >>> 0);
+        drawMountainTile(g, tx * TILE_SIZE, ty * TILE_SIZE, TILE_SIZE, depth, rng, season);
+      }
     }
 
     this.mountainLayer.clear();
@@ -1294,171 +1306,99 @@ function computeMountainClusters(
 }
 
 
-// ─── Mountain Voronoi graph renderer ─────────────────────────────────────────
+
+// ─── Mountain icon renderer ───────────────────────────────────────────────────
 //
-//  Approach (Amit Patel / polygon map generation):
-//    1. Place N random Voronoi seed points inside the cluster bounding box.
-//    2. Each seed carries a random ±bias that nudges the elevation of all
-//       tiles assigned to it, creating distinct polygonal "cells".
-//    3. Each tile's base elevation = interiorDepth / maxDepth (tiles deep in
-//       the cluster are naturally higher).  The seed bias breaks up the
-//       smooth radial gradient into irregular polygonal patches.
-//    4. Tiles are flat-shaded by elevation: dark rock → mid rock → light rock
-//       → snow.  Contour strokes are drawn on edges where elevation drops
-//       ≥ 0.07 (the downhill side of the step), giving a topographic-map feel.
-//  Pure 2D top-down — no isometric projection, no fake side-faces.
+//  Each mountain tile gets 1–4 stacked "bump" icons drawn in painter's order
+//  (back row first → front row on top).  Each bump is:
+//    1. A dark drop-shadow ellipse (offset right+down)
+//    2. A squashed base ellipse (the body of the hill — darkest tone)
+//    3. A lighter mid-face ellipse (lit from upper-left)
+//    4. A highlight spot (upper-left, lightest)
+//    5. Optional snow cap (two layered ellipses at the peak)
+//
+//  Icon count / size / snow presence scales with BFS interior depth so edge
+//  tiles look like gentle foothills and deep tiles look like tall peaks.
 
-/** Integer hash → uniform [0,1) noise.  Cheap per-tile colour variation. */
-function mtnHashNoise(x: number, y: number, seed: number): number {
-  let n = Math.imul(x + 11, 374761393) ^ Math.imul(y + 7, 668265263) ^ (seed | 0);
-  n = Math.imul(n ^ (n >>> 13), 1274126177);
-  return ((n ^ (n >>> 16)) >>> 0) / 4294967295;
-}
+/** Draws one mountain bump icon centred at (cx, cy). */
+function drawMountainBump(
+  g: Phaser.GameObjects.Graphics,
+  cx: number, cy: number,
+  radius: number,
+  hasSnow: boolean,
+  season: number,
+): void {
+  const winter    = season === 3;
+  const rockDark  = winter ? 0x525e6e : 0x524a42;
+  const rockMid   = winter ? 0x7a8ea0 : 0x7a6e5e;
+  const rockLight = winter ? 0xa8bac8 : 0x9e9080;
+  const snowLit   = winter ? 0xf2f4f8 : 0xf2f0e8;
+  const snowSh    = winter ? 0xccd8e4 : 0xd8dcd8;
 
-/** Linearly interpolate two packed-RGB hex colours. */
-function lerpColor(a: number, b: number, t: number): number {
-  const ar = (a >> 16) & 0xff, ag = (a >> 8) & 0xff, ab = a & 0xff;
-  const br = (b >> 16) & 0xff, bg = (b >> 8) & 0xff, bb = b & 0xff;
-  return (Math.round(ar + (br - ar) * t) << 16)
-       | (Math.round(ag + (bg - ag) * t) << 8)
-       |  Math.round(ab + (bb - ab) * t);
+  const ry = radius * 0.62;   // vertical squash for top-down perspective
+
+  // 1. Drop shadow
+  g.fillStyle(0x000000, 0.20);
+  g.fillEllipse(cx + radius * 0.20, cy + ry * 0.26, radius * 2.2, ry * 1.3);
+
+  // 2. Base body (darkest — represents the unlit slopes)
+  g.fillStyle(rockDark, 1.0);
+  g.fillEllipse(cx, cy, radius * 2.0, ry * 2.0);
+
+  // 3. Mid lit face (covers most of upper-centre)
+  g.fillStyle(rockMid, 0.85);
+  g.fillEllipse(cx - radius * 0.12, cy - ry * 0.16, radius * 1.50, ry * 1.30);
+
+  // 4. Highlight (upper-left)
+  g.fillStyle(rockLight, 0.55);
+  g.fillEllipse(cx - radius * 0.30, cy - ry * 0.34, radius * 0.85, ry * 0.68);
+
+  // 5. Snow cap
+  if (hasSnow) {
+    g.fillStyle(snowLit, 0.92);
+    g.fillEllipse(cx - radius * 0.05, cy - ry * 0.42, radius * 0.80, ry * 0.50);
+    g.fillStyle(snowSh, 0.55);
+    g.fillEllipse(cx + radius * 0.14, cy - ry * 0.30, radius * 0.40, ry * 0.26);
+  }
 }
 
 /**
- * Assigns each mountain tile an elevation value in [0, 1].
- *
- * Base elevation = interiorDepth / maxDepth  (higher toward cluster centre).
- * A set of N random Voronoi seeds are scattered in the cluster bounding box;
- * each seed carries a random bias in [−0.18, +0.18] that shifts every tile
- * assigned to it, producing distinct polygonal elevation facets.
+ * Draws mountain icons on a single tile at pixel position (px, py).
+ * `depth` is the BFS interior depth (0 = edge tile, higher = further inside
+ * the cluster).  Icons are generated deterministically from `rng`.
  */
-function buildMtnVoronoi(
-  clusterTiles: Array<{ x: number; y: number }>,
-  interiorDepth: Map<string, number>,
-  maxDepth: number,
-  seed: number,
-): Map<string, number> {
-  const rng = makeRng(seed);
-  const N   = Math.max(6, Math.round(Math.sqrt(clusterTiles.length) * 2.2));
+function drawMountainTile(
+  g: Phaser.GameObjects.Graphics,
+  px: number, py: number,
+  TS: number,
+  depth: number,
+  rng: () => number,
+  season: number,
+): void {
+  const cx = px + TS * 0.5;
+  const cy = py + TS * 0.5;
 
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const t of clusterTiles) {
-    if (t.x < minX) minX = t.x;
-    if (t.y < minY) minY = t.y;
-    if (t.x > maxX) maxX = t.x;
-    if (t.y > maxY) maxY = t.y;
-  }
-  const W = maxX - minX + 1;
-  const H = maxY - minY + 1;
+  // Scale icon size and count with depth
+  const count      = depth === 0 ? 1 + Math.floor(rng() * 2)   // 1-2 small foothills
+                   : depth === 1 ? 2 + Math.floor(rng() * 2)   // 2-3 medium hills
+                   :               2 + Math.floor(rng() * 3);  // 2-4 large peaks
+  const baseRadius = depth === 0 ? TS * 0.20
+                   : depth === 1 ? TS * 0.27
+                   :               TS * 0.33;
+  const hasSnow    = depth >= 3 || (depth === 2 && rng() < 0.6) || (depth === 1 && rng() < 0.20);
 
-  // Voronoi seeds: random position + elevation bias
-  const seeds: Array<{ x: number; y: number; bias: number }> = [];
-  for (let i = 0; i < N; i++) {
-    seeds.push({
-      x:    minX + rng() * W,
-      y:    minY + rng() * H,
-      bias: (rng() - 0.5) * 0.36,   // ±0.18 elevation nudge
+  // Build list of icon positions, then sort back-to-front (ascending y)
+  const icons: { x: number; y: number; r: number }[] = [];
+  for (let i = 0; i < count; i++) {
+    icons.push({
+      x: cx + (rng() - 0.5) * TS * 0.52,
+      y: cy + (rng() - 0.5) * TS * 0.42,
+      r: baseRadius * (0.72 + rng() * 0.52),
     });
   }
+  icons.sort((a, b) => a.y - b.y);
 
-  const elevation = new Map<string, number>();
-  for (const t of clusterTiles) {
-    const key   = `${t.x},${t.y}`;
-    const depth = interiorDepth.get(key) ?? 0;
-    const base  = maxDepth > 0 ? depth / maxDepth : 0;
-
-    // Nearest-seed Voronoi assignment
-    let minD2 = Infinity, bias = 0;
-    for (const s of seeds) {
-      const dx = t.x - s.x, dy = t.y - s.y;
-      const d2 = dx * dx + dy * dy;
-      if (d2 < minD2) { minD2 = d2; bias = s.bias; }
-    }
-
-    elevation.set(key, Math.max(0, Math.min(1, base + bias)));
-  }
-  return elevation;
-}
-
-/**
- * Renders Voronoi-elevation mountain tiles as flat-shaded polygons.
- *
- * Pass 1 — fills each tile with an elevation-derived colour:
- *   [0, 0.33) → dark rock → mid rock
- *   [0.33, 0.66) → mid rock → light rock
- *   [0.66, snowLine) → light rock
- *   [snowLine, 1] → blend into snow (hash-noise split between lit/shade snow)
- *
- * Pass 2 — draws dark contour strokes on the downhill side of any edge
- *   where elevation drops ≥ 0.07, mimicking topographic contour lines.
- */
-function renderMtnVoronoi(
-  g: Phaser.GameObjects.Graphics,
-  clusterTiles: Array<{ x: number; y: number }>,
-  elevation: Map<string, number>,
-  season: number,
-  seed: number,
-): void {
-  const TS   = TILE_SIZE;
-  const DIRS: [number, number][] = [[1,0],[-1,0],[0,1],[0,-1]];
-  const tileSet = new Set(clusterTiles.map(t => `${t.x},${t.y}`));
-
-  // Season-adjusted palette
-  const winter  = season === 3;
-  const DARK    = winter ? 0x606878 : 0x5c5248;
-  const MID     = winter ? 0x8090a0 : 0x7e7264;
-  const LIGHT   = winter ? 0xa8b8c8 : 0xa2947e;
-  const SNOW    = winter ? 0xf4f6f8 : 0xf0f2e8;
-  const SNOW_SH = winter ? 0xd0dce8 : 0xc8d0d8;
-  const SNOW_LINE = 0.70;
-
-  // ── Pass 1: fill tiles by elevation ──────────────────────────────────────
-  for (const t of clusterTiles) {
-    const key  = `${t.x},${t.y}`;
-    const elev = elevation.get(key) ?? 0;
-    const px   = t.x * TS, py = t.y * TS;
-
-    let color: number;
-    if (elev < 0.33) {
-      color = lerpColor(DARK, MID, elev / 0.33);
-    } else if (elev < 0.66) {
-      color = lerpColor(MID, LIGHT, (elev - 0.33) / 0.33);
-    } else {
-      color = LIGHT;
-    }
-
-    if (elev > SNOW_LINE) {
-      const n       = mtnHashNoise(t.x * 3, t.y * 3, seed);
-      const snowCol = n > 0.52 ? SNOW_SH : SNOW;
-      color         = lerpColor(color, snowCol, Math.min(1, (elev - SNOW_LINE) / 0.22));
-    }
-
-    g.fillStyle(color, 1.0);
-    g.fillRect(px, py, TS, TS);
-  }
-
-  // ── Pass 2: contour strokes on downhill edges ─────────────────────────────
-  for (const t of clusterTiles) {
-    const key  = `${t.x},${t.y}`;
-    const elev = elevation.get(key) ?? 0;
-    const px   = t.x * TS, py = t.y * TS;
-
-    for (const [dx, dy] of DIRS) {
-      const nkey = `${t.x + dx},${t.y + dy}`;
-      if (!tileSet.has(nkey)) continue;
-      const nElev = elevation.get(nkey) ?? 0;
-      const drop  = elev - nElev;
-      if (drop < 0.07) continue;
-
-      // Draw stroke on the edge of *this* tile that faces the lower neighbour
-      let lx1: number, ly1: number, lx2: number, ly2: number;
-      if      (dx === 1)  { lx1 = px+TS; ly1 = py;    lx2 = px+TS; ly2 = py+TS; }
-      else if (dx === -1) { lx1 = px;    ly1 = py;    lx2 = px;    ly2 = py+TS; }
-      else if (dy === 1)  { lx1 = px;    ly1 = py+TS; lx2 = px+TS; ly2 = py+TS; }
-      else                { lx1 = px;    ly1 = py;    lx2 = px+TS; ly2 = py;    }
-
-      g.lineStyle(2.5, 0x28201a, Math.min(0.75, drop * 4.0));
-      g.lineBetween(lx1, ly1, lx2, ly2);
-    }
+  for (const ic of icons) {
+    drawMountainBump(g, ic.x, ic.y, ic.r, hasSnow, season);
   }
 }

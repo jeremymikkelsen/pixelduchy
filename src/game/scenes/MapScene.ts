@@ -464,8 +464,10 @@ export class MapScene extends Phaser.Scene {
       const mtnData = generateMountainData(clusterW, clusterH, seed, cluster.tier);
       const anchorX = (minTX + clusterW * 0.5) * TILE_SIZE;
       const anchorY = (maxTY + 1) * TILE_SIZE;
-      const clusterPixW = clusterW * TILE_SIZE;
-      const clusterPixH = clusterH * TILE_SIZE;
+      // Add 1-tile padding per side so the projection covers all edge tiles
+      // and bleeds slightly into neighbours — same approach as the beach layer.
+      const clusterPixW = (clusterW + 2) * TILE_SIZE;
+      const clusterPixH = (clusterH + 2) * TILE_SIZE;
       renderMountainProjection(g, mtnData, anchorX, anchorY, clusterPixW, clusterPixH, season);
 
       // Stone cliffs on ocean/coast-facing edges (drawn on top of the projection).
@@ -1518,8 +1520,10 @@ function renderMountainProjection(
   // the cluster's tile bounding box in screen space.
   const xScale      = clusterPixW / (width + height);
   const yScale      = clusterPixH / (width + height);
-  // ~10× less height than before — appropriate for a top-down view
-  const heightScale = Math.min(clusterPixW, clusterPixH) * 0.07;
+  // +50% from previous — base it on the inner cluster size (without padding)
+  // so a single-tile cluster still gets a visible bump, not a giant spike.
+  const innerPx = Math.min(clusterPixW, clusterPixH) - 2 * TILE_SIZE;
+  const heightScale = Math.max(TILE_SIZE * 0.18, innerPx * 0.105);
 
   // Seasonal palette
   const rockDark:  MtnRGB = season === 3 ? [72,78,90]    : [54,52,58];

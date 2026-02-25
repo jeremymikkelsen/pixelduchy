@@ -65,7 +65,7 @@ function classifyTile(elevation: number, moisture: number, distToEdge: number, m
   if (elevation > mountainThreshold) return 'mountain';
   if (moisture > 0.74) return 'wetland';
   if (moisture > 0.45) return 'forest';
-  if (moisture < 0.25) return 'desert';
+  // Desert removed — dry low-moisture land becomes plains.
   return 'plains';
 }
 
@@ -118,13 +118,18 @@ function resolveWildlife(resource: ResourceType | null, yield_: number): [number
 export function generateWorld({ width, height, seed }: WorldGenOptions): WorldMap {
   const rng = mulberry32(seed);
 
-  const elevation = valueNoise(width, height, rng, 8);
+  // Two elevation octaves mixed together: large-scale base + fine-grain detail.
+  // The fine octave breaks up the smooth hills that cause large clumpy mountain regions.
+  const elevBase   = valueNoise(width, height, rng, 8);
+  const elevDetail = valueNoise(width, height, rng, 16);
+  const elevation  = elevBase.map((row, y) =>
+    row.map((v, x) => Math.min(1, v * 0.72 + elevDetail[y][x] * 0.28))
+  );
   const moisture  = valueNoise(width, height, rng, 6);
 
-  // Cap mountains at ≤10% of total tiles by computing the elevation value at
-  // the 90th percentile across all tiles and using that as the lower bound.
+  // Cap mountains at ≤5% of total tiles: use the 95th-percentile elevation.
   const sortedElev = elevation.flat().sort((a, b) => a - b);
-  const mountainThreshold = Math.max(0.72, sortedElev[Math.floor(sortedElev.length * 0.90)]);
+  const mountainThreshold = Math.max(0.72, sortedElev[Math.floor(sortedElev.length * 0.95)]);
 
   const tiles: Tile[][] = [];
 

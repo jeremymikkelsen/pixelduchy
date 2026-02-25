@@ -338,16 +338,22 @@ export class MapScene extends Phaser.Scene {
         const rx = 22 + pondRng() * 30;
         const ry = rx * (0.38 + pondRng() * 0.24); // flattened for 3/4 view
 
-        const waterCol = season === 3 ? 0x6898b8 : 0x2a6890;
+        // Murky bog colours: dark green-brown, not clear blue
+        const waterCol  = season === 3 ? 0x3a4830 : 0x2e4820;
+        const algaeCol  = season === 3 ? 0x4a5838 : 0x3a5828;
+        const scumCol   = season === 3 ? 0x586040 : 0x486030;
         // Shadow
-        g.fillStyle(0x000000, 0.14);
+        g.fillStyle(0x000000, 0.18);
         g.fillEllipse(px + 2, py + 3, rx * 2.1, ry * 2.1);
         // Pond body
-        g.fillStyle(waterCol, 0.82);
+        g.fillStyle(waterCol, 0.88);
         g.fillEllipse(px, py, rx * 2, ry * 2);
-        // Reflection highlight
-        g.fillStyle(season === 3 ? 0x9cc0d8 : 0x60b0d8, 0.38);
-        g.fillEllipse(px - rx * 0.22, py - ry * 0.24, rx * 1.1, ry * 0.65);
+        // Algae / murk patches
+        g.fillStyle(algaeCol, 0.55);
+        g.fillEllipse(px + rx * 0.28, py + ry * 0.18, rx * 0.90, ry * 0.55);
+        // Surface scum highlight (dull, not shiny)
+        g.fillStyle(scumCol, 0.32);
+        g.fillEllipse(px - rx * 0.22, py - ry * 0.24, rx * 0.85, ry * 0.50);
         // Edge reeds
         const reedCount = 2 + Math.floor(pondRng() * 4);
         for (let r = 0; r < reedCount; r++) {
@@ -396,9 +402,19 @@ export class MapScene extends Phaser.Scene {
       }
     }
 
+    // ── Plains grass strokes (lines instead of circles)
+    for (let ty = 0; ty < height; ty++) {
+      for (let tx = 0; tx < width; tx++) {
+        if (tiles[ty][tx].type !== 'plains') continue;
+        if (adjToWater(tx, ty)) continue;
+        const rng = makeRng((tx * 4391 + ty * 5297 + season * 701 + 55) >>> 0);
+        drawPlainsGrass(g, tx * TS, ty * TS, TS, rng, season);
+      }
+    }
+
     // ── Scatter solitary trees on non-forest tiles (coast and ocean excluded)
     const SCATTER_CHANCE: Partial<Record<string, number>> = {
-      plains: 0.22, wetland: 0.14, mountain: 0.05,
+      wetland: 0.14, mountain: 0.05,
     };
     for (let ty = 0; ty < height; ty++) {
       for (let tx = 0; tx < width; tx++) {
@@ -1195,6 +1211,47 @@ function drawRockyCoast(
     g.fillStyle(0x9a9888, 0.40);
     g.fillCircle(bx - r * 0.22, by - r * 0.18, r * 0.36);
   }
+}
+
+// ─── Plains grass strokes ─────────────────────────────────────────────────────
+
+/** Draws short grass-stroke lines on a plains tile — field-row look. */
+function drawPlainsGrass(
+  g: Phaser.GameObjects.Graphics,
+  px: number, py: number,
+  TS: number,
+  rng: () => number,
+  season: number,
+): void {
+  // Seasonal palette: three colours per season [dark, mid, light]
+  const cols: [number, number, number][] = [
+    [0x5a8c38, 0x78aa50, 0x9acb68], // spring
+    [0x4a8028, 0x68a040, 0x88be58], // summer
+    [0x8a6c28, 0xa88840, 0xc8a858], // autumn — golden
+    [0x8898a0, 0xa0aeb8, 0xbeccd8], // winter — frosted/pale
+  ];
+  const [darkC, midC, hiC] = cols[season] ?? cols[0];
+
+  // Each tile gets a consistent "row angle" + 8-14 strokes
+  const rowAngle = (rng() - 0.5) * 0.5; // ±0.25 rad from horizontal
+  const cosA = Math.cos(rowAngle), sinA = Math.sin(rowAngle);
+  const count = 8 + Math.floor(rng() * 7);
+
+  for (let i = 0; i < count; i++) {
+    const sx  = px + rng() * TS;
+    const sy  = py + rng() * TS;
+    const len = 8 + rng() * 18;
+    // Small per-stroke angle wobble
+    const wobble = (rng() - 0.5) * 0.25;
+    const cw = Math.cos(rowAngle + wobble), sw = Math.sin(rowAngle + wobble);
+    const col    = rng() < 0.4 ? darkC : rng() < 0.6 ? midC : hiC;
+    const alpha  = 0.28 + rng() * 0.28;
+    const weight = 0.7 + rng() * 1.0;
+    g.lineStyle(weight, col, alpha);
+    g.lineBetween(sx - cw * len * 0.5, sy - sw * len * 0.5,
+                  sx + cw * len * 0.5, sy + sw * len * 0.5);
+  }
+  void cosA; void sinA; // suppress unused-var lint
 }
 
 // ─── Mountain cluster analysis ────────────────────────────────────────────────

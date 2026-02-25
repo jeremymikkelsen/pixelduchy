@@ -1425,61 +1425,6 @@ function drawRoundedHillVar(
 }
 
 /** Angular polygon hill with rock strata — no snow, faceted look. */
-function drawAngledHillVar(
-  g: Phaser.GameObjects.Graphics,
-  cx: number, cy: number,
-  radius: number, ry: number,
-  pal: { dark: number; mid: number; hi: number },
-  rng: () => number,
-): void {
-  const j = (v: number) => v + (rng() - 0.5) * radius * 0.13;
-
-  g.fillStyle(0x000000, 0.20);
-  g.fillEllipse(cx + radius * 0.18, cy + ry * 0.26, radius * 2.4, ry * 1.35);
-
-  // Top can be slightly off-centre for an asymmetric ridge look
-  const topX = cx + (rng() - 0.5) * radius * 0.18;
-  const topY = cy - ry * (0.78 + rng() * 0.20);
-
-  const body = [
-    { x: topX,                   y: topY },
-    { x: cx + j(radius * 0.30), y: cy - ry * 0.42 },
-    { x: cx + j(radius * 0.72), y: cy + ry * 0.08 },
-    { x: cx + j(radius * 0.58), y: cy + ry * 0.60 },
-    { x: cx + j(0),             y: cy + ry * 0.78 },
-    { x: cx - j(radius * 0.58), y: cy + ry * 0.60 },
-    { x: cx - j(radius * 0.72), y: cy + ry * 0.08 },
-    { x: cx - j(radius * 0.30), y: cy - ry * 0.42 },
-  ];
-  g.fillStyle(pal.dark, 1.0);
-  g.fillPoints(body, true);
-
-  // Lit left face
-  g.fillStyle(pal.mid, 0.88);
-  g.fillPoints([
-    body[0], body[7], body[6],
-    { x: cx - radius * 0.05, y: cy + ry * 0.15 },
-    { x: cx + radius * 0.08, y: cy - ry * 0.30 },
-  ], true);
-
-  // Highlight ridge
-  g.fillStyle(pal.hi, 0.50);
-  g.fillPoints([
-    body[0], body[7],
-    { x: cx - radius * 0.13, y: cy - ry * 0.26 },
-    { x: cx + (topX - cx) * 0.6, y: topY + ry * 0.28 },
-  ], true);
-
-  // Rock strata lines (thin horizontal bands on the right/shadow face)
-  const strataCount = 2 + Math.floor(rng() * 3);
-  g.lineStyle(1.5, pal.hi, 0.25);
-  for (let s = 0; s < strataCount; s++) {
-    const t  = 0.12 + (s / strataCount) * 0.68;
-    const sy = topY + t * (cy + ry * 0.78 - topY);
-    const hw = radius * (0.16 + t * 0.50);
-    g.lineBetween(cx - hw * 0.4, sy, cx + hw * 0.85, sy + ry * 0.03);
-  }
-}
 
 /** Pointed snow-capped peak (angular polygon + pointed snow patch). */
 function drawPointyPeakVar(
@@ -1563,10 +1508,8 @@ function drawMountainTile(
   const palettes = season === 3 ? MTN_PALETTES_WINTER : MTN_PALETTES;
   const pal = palettes[Math.floor(rng() * palettes.length)];
 
-  const hasSnow  = depth >= 3 && rng() < 0.75;
-  const roll     = rng();
-  const usePointy = hasSnow  && roll < 0.62;
-  const useAngled = !hasSnow && roll < 0.48;
+  const hasSnow   = depth >= 3 && rng() < 0.75;
+  const usePointy = hasSnow && rng() < 0.62;
 
   // Jitter centre so adjacent icons don't align to the grid
   const cx = px + TS * 0.5 + (rng() - 0.5) * TS * 0.22;
@@ -1574,8 +1517,6 @@ function drawMountainTile(
 
   if (usePointy) {
     drawPointyPeakVar(g, cx, cy, radius, ry, pal, rng, season);
-  } else if (useAngled) {
-    drawAngledHillVar(g, cx, cy, radius, ry, pal, rng);
   } else {
     drawRoundedHillVar(g, cx, cy, radius, ry, pal, rng);
   }

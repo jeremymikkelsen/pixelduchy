@@ -50,6 +50,7 @@ export class MapScene extends Phaser.Scene {
     const existingSession = useGameStore.getState().session;
     this.world = existingSession?.map ?? generateWorld({ width: 80, height: 80, seed: Date.now() });
     this.currentSeasonIndex = getSeasonIndex(existingSession?.turnNumber ?? 1);
+    this.patchMissingVisualTypes();
 
     // Static overlays baked to RenderTextures — drawn once per update then
     // replayed as a single textured quad every frame (no per-frame command replay).
@@ -82,13 +83,14 @@ export class MapScene extends Phaser.Scene {
       const newMap = state.session?.map;
       if (newMap && newMap !== this.world) {
         this.world = newMap;
+        this.patchMissingVisualTypes();
         this.tileLayer.clear();
         this.renderTileLayer();
         this.renderBiomeTransitions();
         this.renderBeach();
         this.renderRivers();
-        this.renderVegetation();
         this.renderMountains();
+        this.renderVegetation();
         if (state.myDuchy?.tiles.length) {
           const ts = state.myDuchy.tiles;
           const cx = ts.reduce((s, t) => s + t.x, 0) / ts.length;
@@ -105,8 +107,8 @@ export class MapScene extends Phaser.Scene {
         this.renderTileLayer();
         this.renderBiomeTransitions();
         this.renderBeach();
-        this.renderVegetation();
         this.renderMountains();
+        this.renderVegetation();
         // Rivers are permanent — no re-bake on season change
       }
 
@@ -125,6 +127,48 @@ export class MapScene extends Phaser.Scene {
   }
 
   // ─── Tile rendering ──────────────────────────────────────────────────────────
+
+  /** BFS backfill for old saves that pre-date the visualType field.
+   *  Mountain tiles without a visualType inherit their nearest non-mountain
+   *  neighbour's visual biome, propagating inward from cluster edges. */
+  private patchMissingVisualTypes() {
+    const { tiles, width, height } = this.world;
+    const DIRS: [number, number][] = [[1,0],[-1,0],[0,1],[0,-1]];
+    const queue: { x: number; y: number }[] = [];
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const tile = tiles[y][x];
+        if (tile.type !== 'mountain' || tile.visualType) continue;
+        for (const [dx, dy] of DIRS) {
+          const n = tiles[y + dy]?.[x + dx];
+          if (!n || n.type === 'mountain') continue;
+          tile.visualType = (n.type === 'ocean' || n.type === 'coast') ? 'plains' : (n.visualType ?? n.type);
+          queue.push({ x, y });
+          break;
+        }
+      }
+    }
+    let head = 0;
+    while (head < queue.length) {
+      const { x, y } = queue[head++];
+      const vt = tiles[y][x].visualType!;
+      for (const [dx, dy] of DIRS) {
+        const nx = x + dx, ny = y + dy;
+        const n = tiles[ny]?.[nx];
+        if (n && n.type === 'mountain' && !n.visualType) {
+          n.visualType = vt;
+          queue.push({ x: nx, y: ny });
+        }
+      }
+    }
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const tile = tiles[y][x];
+        if (tile.type === 'mountain' && !tile.visualType) tile.visualType = 'forest';
+      }
+    }
+  }
 
   private tileKey(type: TileType, x: number, y: number): string {
     const variant = Math.abs(x * 7 + y * 13) % NUM_TILE_VARIANTS;
@@ -470,25 +514,29 @@ export class MapScene extends Phaser.Scene {
     const clusters = computeMountainClusters(tiles, width, height);
     const season = this.currentSeasonIndex;
 
-    // Pass 1 — secondary (small/medium) peaks drawn first so big peak overlaps.
-    for (const cluster of clusters) {
+    const palettes = season === 3 ? ROCK_PALETTES_WINTER : ROCK_PALETTES;
+
+    // Pass 1 — secondary (small/medium) peaks: bare rock, no snow.
+    for (const [ci, cluster] of clusters.entries()) {
+      const pal = palettes[ci % palettes.length];
       for (const pt of cluster.secondarySummits) {
         const rng = makeRng((pt.x * 7919 + pt.y * 6271 + 99) >>> 0);
         const cx = pt.x * TILE_SIZE + TILE_SIZE * 0.5;
         const cy = pt.y * TILE_SIZE + TILE_SIZE * 0.5;
         const radius = TILE_SIZE * (0.70 + rng() * 0.90); // 0.7–1.6 tiles
-        drawSnowPeak(g, cx, cy, radius, rng, season);
+        drawSnowPeak(g, cx, cy, radius, rng, season, false, pal.dark, pal.light);
       }
     }
 
-    // Pass 2 — main (big) peak drawn last, sits on top.
-    for (const cluster of clusters) {
+    // Pass 2 — main (big) peak: snow-capped, drawn on top.
+    for (const [ci, cluster] of clusters.entries()) {
+      const pal = palettes[ci % palettes.length];
       const pt = cluster.mainSummit;
       const rng = makeRng((pt.x * 7919 + pt.y * 6271 + 42) >>> 0);
       const cx = pt.x * TILE_SIZE + TILE_SIZE * 0.5;
       const cy = pt.y * TILE_SIZE + TILE_SIZE * 0.5;
       const radius = TILE_SIZE * (2.0 + rng() * 1.0); // 2–3 tiles wide
-      drawSnowPeak(g, cx, cy, radius, rng, season);
+      drawSnowPeak(g, cx, cy, radius, rng, season, true, pal.dark, pal.light);
     }
 
     this.mountainLayer.clear();
@@ -1406,8 +1454,25 @@ function computeMountainClusters(
 //
 //  One large peak (radius 2–3 × TILE_SIZE) per cluster at the main summit,
 //  plus 0–4 smaller peaks (radius 0.7–1.6 × TILE_SIZE) at secondary summits.
-//  All peaks are faceted snow peaks; in winter the snow cap covers ~88% of the
-//  mountain for a fully snow-covered look.
+//  Main peak has a snow cap (88% coverage in winter); small peaks are bare rock.
+//  Each cluster gets a consistent rock palette for visual variety.
+
+// Five rock palettes for non-winter seasons (charcoal → warm brown → slate → reddish → olive)
+const ROCK_PALETTES = [
+  { dark: 0x2e3038, light: 0x82828c }, // charcoal grey
+  { dark: 0x3a2818, light: 0x7a5c40 }, // warm brown
+  { dark: 0x2a3848, light: 0x5878a0 }, // slate blue
+  { dark: 0x38201c, light: 0x785048 }, // reddish stone
+  { dark: 0x283028, light: 0x58705a }, // mossy grey-green
+];
+// Winter variants — all shifted toward icy blue-grey
+const ROCK_PALETTES_WINTER = [
+  { dark: 0x4a5868, light: 0x90a0b0 }, // icy charcoal
+  { dark: 0x485060, light: 0x8898b0 }, // icy warm
+  { dark: 0x384858, light: 0x6888a8 }, // icy slate
+  { dark: 0x485060, light: 0x8890a8 }, // icy reddish
+  { dark: 0x405058, light: 0x7890a0 }, // icy mossy
+];
 
 /** Linearly interpolates between two packed RGB hex colours. t ∈ [0,1]. */
 function lerpHex(a: number, b: number, t: number): number {
@@ -1431,6 +1496,9 @@ function drawSnowPeak(
   radius: number,
   rng: () => number,
   season: number,
+  showSnow: boolean,
+  rockDark: number,
+  rockLight: number,
 ): void {
   const LIGHT = -Math.PI * 0.75; // upper-left light direction
   const N = 7;
@@ -1449,15 +1517,12 @@ function drawSnowPeak(
     });
   }
 
-  // Rock body — N triangular faces, each shaded by light angle
-  // Winter: icy blue-grey rock; other seasons: dark charcoal
-  const ROCK_DARK  = season === 3 ? 0x4a5868 : 0x2e3038;
-  const ROCK_LIGHT = season === 3 ? 0x90a0b0 : 0x82828c;
+  // Rock body — N triangular faces shaded by light angle; palette varies per cluster
   for (let i = 0; i < N; i++) {
     const b0 = base[i], b1 = base[(i + 1) % N];
     const mx = (b0.x + b1.x) / 2, my = (b0.y + b1.y) / 2;
     const t  = Math.cos(Math.atan2(my - peakY, mx - peakX) - LIGHT) * 0.5 + 0.5;
-    g.fillStyle(lerpHex(ROCK_DARK, ROCK_LIGHT, t), 1.0);
+    g.fillStyle(lerpHex(rockDark, rockLight, t), 1.0);
     g.fillPoints([{ x: peakX, y: peakY }, b0, b1], true);
   }
 
@@ -1467,20 +1532,22 @@ function drawSnowPeak(
     g.lineBetween(peakX, peakY, base[i].x, base[i].y);
   }
 
-  // Snow cap — covers ~34% of height normally; ~88% in winter (fully snow-covered)
-  const snowFraction = season === 3 ? 0.88 : 0.34;
-  const SNOW_DARK  = season === 3 ? 0xaabece : 0xbcbab4;
-  const SNOW_LIGHT = season === 3 ? 0xdce8f8 : 0xf0ede8;
-  const snowBase = base.map(b => ({
-    x: peakX + (b.x - peakX) * snowFraction,
-    y: peakY + (b.y - peakY) * snowFraction,
-  }));
-  for (let i = 0; i < N; i++) {
-    const b0 = snowBase[i], b1 = snowBase[(i + 1) % N];
-    const mx = (b0.x + b1.x) / 2, my = (b0.y + b1.y) / 2;
-    const t  = Math.cos(Math.atan2(my - peakY, mx - peakX) - LIGHT) * 0.5 + 0.5;
-    g.fillStyle(lerpHex(SNOW_DARK, SNOW_LIGHT, t), 0.96);
-    g.fillPoints([{ x: peakX, y: peakY }, b0, b1], true);
+  // Snow cap — main peaks only; covers ~34% normally, ~88% in winter
+  if (showSnow) {
+    const snowFraction = season === 3 ? 0.88 : 0.34;
+    const SNOW_DARK  = season === 3 ? 0xaabece : 0xbcbab4;
+    const SNOW_LIGHT = season === 3 ? 0xdce8f8 : 0xf0ede8;
+    const snowBase = base.map(b => ({
+      x: peakX + (b.x - peakX) * snowFraction,
+      y: peakY + (b.y - peakY) * snowFraction,
+    }));
+    for (let i = 0; i < N; i++) {
+      const b0 = snowBase[i], b1 = snowBase[(i + 1) % N];
+      const mx = (b0.x + b1.x) / 2, my = (b0.y + b1.y) / 2;
+      const t  = Math.cos(Math.atan2(my - peakY, mx - peakX) - LIGHT) * 0.5 + 0.5;
+      g.fillStyle(lerpHex(SNOW_DARK, SNOW_LIGHT, t), 0.96);
+      g.fillPoints([{ x: peakX, y: peakY }, b0, b1], true);
+    }
   }
 }
 

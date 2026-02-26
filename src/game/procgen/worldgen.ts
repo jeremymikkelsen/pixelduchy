@@ -182,6 +182,36 @@ export function generateWorld({ width, height, seed }: WorldGenOptions): WorldMa
     }
   }
 
+  // Post-process: reclassify mountain tiles within Chebyshev distance 2 of coast/ocean.
+  // Uses position-based RNG so resource assignment is deterministic per tile.
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (tiles[y][x].type !== 'mountain') continue;
+      let tooClose = false;
+      outer: for (let dy = -2; dy <= 2; dy++) {
+        for (let dx = -2; dx <= 2; dx++) {
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+          const t = tiles[ny][nx].type;
+          if (t === 'coast' || t === 'ocean') { tooClose = true; break outer; }
+        }
+      }
+      if (!tooClose) continue;
+      const newType: TileType = tiles[y][x].visualType ?? 'plains';
+      const tileRng = mulberry32((x * 8191 + y * 6271 + seed) >>> 0);
+      const resource    = resolveTileResource(newType, tileRng);
+      const hasResource = resource !== null && tileRng() < 0.35;
+      const yield_      = hasResource ? Math.round(1 + tileRng() * 4) : 0;
+      const [wCap, wCur] = hasResource ? resolveWildlife(resource, yield_) : [0, 0];
+      tiles[y][x].type            = newType;
+      tiles[y][x].visualType      = newType;
+      tiles[y][x].resource        = hasResource ? resource : null;
+      tiles[y][x].resourceYield   = yield_;
+      tiles[y][x].wildlifeCapacity = wCap;
+      tiles[y][x].wildlifeCurrent  = wCur;
+    }
+  }
+
   const rivers = generateRivers(tiles, width, height, rng);
 
   return { width, height, tiles, seed, rivers };

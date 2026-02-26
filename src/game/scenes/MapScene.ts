@@ -459,44 +459,34 @@ export class MapScene extends Phaser.Scene {
 
   // ─── Mountain peaks ───────────────────────────────────────────────────────────
 
-  /** Bakes mountain overlays as stacked 2-D top-down hill icons — same
-   *  approach as beach/vegetation: overlapping organic shapes drawn once into
-   *  a RenderTexture and replayed as a single quad every frame.
-   *
-   *  Icon density and size scale with BFS interior depth so edge tiles show
-   *  small foothills and deep interior tiles show large snow-capped peaks. */
+  /** Bakes mountain overlays — one large peak per cluster (at the main summit)
+   *  plus 0–4 smaller peaks at secondary summits, giving 1–5 mountains per
+   *  connected mountain region. In winter every peak is fully snow-covered. */
   private renderMountains() {
     const g = this.make.graphics({}, false);
     const { tiles, width, height } = this.world;
     const clusters = computeMountainClusters(tiles, width, height);
     const season = this.currentSeasonIndex;
 
-    // Collect depth for every mountain tile across all clusters.
-    const depthMap = new Map<string, number>();
+    // Pass 1 — secondary (small/medium) peaks drawn first so big peak overlaps.
     for (const cluster of clusters) {
-      for (const [key, d] of cluster.interiorDepth) depthMap.set(key, d);
-    }
-
-    // Pass 1 — rounded hills (depth < 3): drawn first so peaks overlap them.
-    for (let ty = 0; ty < height; ty++) {
-      for (let tx = 0; tx < width; tx++) {
-        if (tiles[ty][tx].type !== 'mountain') continue;
-        const depth = depthMap.get(`${tx},${ty}`) ?? 0;
-        if (depth >= 3) continue;
-        const rng = makeRng((tx * 7919 + ty * 6271 + 42) >>> 0);
-        drawMountainTile(g, tx * TILE_SIZE, ty * TILE_SIZE, TILE_SIZE, depth, rng, season);
+      for (const pt of cluster.secondarySummits) {
+        const rng = makeRng((pt.x * 7919 + pt.y * 6271 + 99) >>> 0);
+        const cx = pt.x * TILE_SIZE + TILE_SIZE * 0.5;
+        const cy = pt.y * TILE_SIZE + TILE_SIZE * 0.5;
+        const radius = TILE_SIZE * (0.70 + rng() * 0.90); // 0.7–1.6 tiles
+        drawSnowPeak(g, cx, cy, radius, rng, season);
       }
     }
 
-    // Pass 2 — snow peaks (depth >= 3): drawn last, sits visually on top of hills.
-    for (let ty = 0; ty < height; ty++) {
-      for (let tx = 0; tx < width; tx++) {
-        if (tiles[ty][tx].type !== 'mountain') continue;
-        const depth = depthMap.get(`${tx},${ty}`) ?? 0;
-        if (depth < 3) continue;
-        const rng = makeRng((tx * 7919 + ty * 6271 + 42) >>> 0);
-        drawMountainTile(g, tx * TILE_SIZE, ty * TILE_SIZE, TILE_SIZE, depth, rng, season);
-      }
+    // Pass 2 — main (big) peak drawn last, sits on top.
+    for (const cluster of clusters) {
+      const pt = cluster.mainSummit;
+      const rng = makeRng((pt.x * 7919 + pt.y * 6271 + 42) >>> 0);
+      const cx = pt.x * TILE_SIZE + TILE_SIZE * 0.5;
+      const cy = pt.y * TILE_SIZE + TILE_SIZE * 0.5;
+      const radius = TILE_SIZE * (2.0 + rng() * 1.0); // 2–3 tiles wide
+      drawSnowPeak(g, cx, cy, radius, rng, season);
     }
 
     this.mountainLayer.clear();
@@ -1412,29 +1402,10 @@ function computeMountainClusters(
 
 // ─── Mountain icon renderer ───────────────────────────────────────────────────
 //
-//  Icons are LARGER than one tile (radius 0.65–2.15 × TILE_SIZE) so they
-//  overflow and overlap neighbouring tiles, creating natural mountain cluster
-//  silhouettes rather than a rigid per-tile grid.
-//
-//  Per tile: random size, random palette (6 options, warm brown → blue-gray),
-//  random aspect ratio, random shape (round | angled | pointed-snow).
-
-// Six rock palettes, warm-brown → neutral gray → cool blue-gray → volcanic.
-const MTN_PALETTES: Array<{ dark: number; mid: number; hi: number }> = [
-  { dark: 0x6a5038, mid: 0x9a7050, hi: 0xbf9572 }, // warm brown
-  { dark: 0x5a4c38, mid: 0x847058, hi: 0xa89070 }, // brown-gray
-  { dark: 0x524a42, mid: 0x7a6e5e, hi: 0x9e9080 }, // neutral gray-brown
-  { dark: 0x484840, mid: 0x686860, hi: 0x8e8e8e }, // cool gray
-  { dark: 0x505e70, mid: 0x788ca0, hi: 0xa6bac8 }, // blue-gray
-  { dark: 0x4a3028, mid: 0x705040, hi: 0x937060 }, // dark volcanic
-];
-
-const MTN_PALETTES_WINTER: Array<{ dark: number; mid: number; hi: number }> = [
-  { dark: 0x606878, mid: 0x8090a0, hi: 0xa8b8c8 },
-  { dark: 0x586070, mid: 0x788898, hi: 0x9aaab8 },
-  { dark: 0x5a5a68, mid: 0x808090, hi: 0xa0a0b0 },
-  { dark: 0x485868, mid: 0x6a7a8a, hi: 0x8898a8 },
-];
+//  One large peak (radius 2–3 × TILE_SIZE) per cluster at the main summit,
+//  plus 0–4 smaller peaks (radius 0.7–1.6 × TILE_SIZE) at secondary summits.
+//  All peaks are faceted snow peaks; in winter the snow cap covers ~88% of the
+//  mountain for a fully snow-covered look.
 
 /** Linearly interpolates between two packed RGB hex colours. t ∈ [0,1]. */
 function lerpHex(a: number, b: number, t: number): number {
@@ -1443,50 +1414,6 @@ function lerpHex(a: number, b: number, t: number): number {
   return (Math.round(ar + (br - ar) * t) << 16)
        | (Math.round(ag + (bg - ag) * t) << 8)
        |  Math.round(ab + (bb - ab) * t);
-}
-
-/** Smooth rounded hill with rock crack texture — no snow. */
-function drawRoundedHillVar(
-  g: Phaser.GameObjects.Graphics,
-  cx: number, cy: number,
-  radius: number, ry: number,
-  pal: { dark: number; mid: number; hi: number },
-  rng: () => number,
-  season: number,
-): void {
-  // Shadow
-  g.fillStyle(0x000000, 0.20);
-  g.fillEllipse(cx + radius * 0.20, cy + ry * 0.28, radius * 2.3, ry * 1.3);
-
-  // Green grass / moss at base — like tree-rock.jpg
-  const grassCol = season === 2 ? 0x8a7030 : season === 3 ? 0x566050 : 0x3e6a28;
-  g.fillStyle(grassCol, 0.65);
-  g.fillEllipse(cx + radius * 0.06, cy + ry * 0.22, radius * 2.2, ry * 1.50);
-
-  // Rock body — dark base, mid highlight, lit specular
-  g.fillStyle(pal.dark, 1.0);
-  g.fillEllipse(cx, cy, radius * 2.0, ry * 2.0);
-
-  g.fillStyle(pal.mid, 0.85);
-  g.fillEllipse(cx - radius * 0.14, cy - ry * 0.16, radius * 1.55, ry * 1.36);
-
-  g.fillStyle(pal.hi, 0.55);
-  g.fillEllipse(cx - radius * 0.30, cy - ry * 0.34, radius * 0.82, ry * 0.67);
-
-  // Rock crack / crevice lines for texture (like tree-rock.jpg)
-  const crackCount = 2 + Math.floor(rng() * 3);
-  for (let c = 0; c < crackCount; c++) {
-    const sx = cx + (rng() - 0.5) * radius * 0.90;
-    const sy = cy - ry * (0.05 + rng() * 0.55);
-    const ex = sx + (rng() - 0.5) * radius * 0.60;
-    const ey = sy + ry * (0.25 + rng() * 0.50);
-    g.lineStyle(1.4, 0x18161e, 0.38);
-    g.lineBetween(sx, sy, ex, ey);
-  }
-
-  // Subtle gloss on upper-left
-  g.fillStyle(0xffffff, 0.07 + rng() * 0.06);
-  g.fillEllipse(cx - radius * 0.18, cy - ry * 0.44, radius * 0.50, ry * 0.33);
 }
 
 /**
@@ -1530,8 +1457,9 @@ function drawSnowPeak(
   g.fillEllipse(cx, cy + ry * 0.50, radius * 2.0, ry * 1.10);
 
   // Rock body — N triangular faces, each shaded by light angle
-  const ROCK_DARK  = 0x2e3038;
-  const ROCK_LIGHT = 0x82828c;
+  // Winter: icy blue-grey rock; other seasons: dark charcoal
+  const ROCK_DARK  = season === 3 ? 0x4a5868 : 0x2e3038;
+  const ROCK_LIGHT = season === 3 ? 0x90a0b0 : 0x82828c;
   for (let i = 0; i < N; i++) {
     const b0 = base[i], b1 = base[(i + 1) % N];
     const mx = (b0.x + b1.x) / 2, my = (b0.y + b1.y) / 2;
@@ -1546,12 +1474,13 @@ function drawSnowPeak(
     g.lineBetween(peakX, peakY, base[i].x, base[i].y);
   }
 
-  // Snow cap — a smaller cone from the same apex, covering ~34% of the height
+  // Snow cap — covers ~34% of height normally; ~88% in winter (fully snow-covered)
+  const snowFraction = season === 3 ? 0.88 : 0.34;
   const SNOW_DARK  = season === 3 ? 0xaabece : 0xbcbab4;
   const SNOW_LIGHT = season === 3 ? 0xdce8f8 : 0xf0ede8;
   const snowBase = base.map(b => ({
-    x: peakX + (b.x - peakX) * 0.34,
-    y: peakY + (b.y - peakY) * 0.34,
+    x: peakX + (b.x - peakX) * snowFraction,
+    y: peakY + (b.y - peakY) * snowFraction,
   }));
   for (let i = 0; i < N; i++) {
     const b0 = snowBase[i], b1 = snowBase[(i + 1) % N];
@@ -1562,34 +1491,3 @@ function drawSnowPeak(
   }
 }
 
-/**
- * Draws one mountain icon on the tile at pixel (px, py).
- * depth < 3  → rounded hill (foothills, no snow)
- * depth >= 3 → large faceted snow peak spanning multiple tiles
- */
-function drawMountainTile(
-  g: Phaser.GameObjects.Graphics,
-  px: number, py: number,
-  TS: number,
-  depth: number,
-  rng: () => number,
-  season: number,
-): void {
-  // Jitter centre so adjacent icons don't align to the grid
-  const cx = px + TS * 0.5 + (rng() - 0.5) * TS * 0.22;
-  const cy = py + TS * 0.5 + (rng() - 0.5) * TS * 0.22;
-
-  if (depth >= 3) {
-    // Large faceted snow peak — radius spans 2–3 tiles
-    const radius = TS * (2.0 + rng() * 1.2);
-    drawSnowPeak(g, cx, cy, radius, rng, season);
-  } else {
-    // Rounded foothill — size scales with depth
-    const depthFactor = Math.min(1, depth / 2);
-    const radius = TS * (0.65 + depthFactor * 0.80 + rng() * 0.45);
-    const ry     = radius * (0.50 + rng() * 0.16);
-    const palettes = season === 3 ? MTN_PALETTES_WINTER : MTN_PALETTES;
-    const pal = palettes[Math.floor(rng() * palettes.length)];
-    drawRoundedHillVar(g, cx, cy, radius, ry, pal, rng, season);
-  }
-}

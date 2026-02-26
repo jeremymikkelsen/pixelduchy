@@ -231,7 +231,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (session.currentKingDemand) return;
     if (session.kingsTileOffer) return;
 
-    const newResources = harvestResources(myDuchy, session.map);
+    const newResources = harvestResources(myDuchy);
     const newTurn = session.turnNumber + 1;
     const newMyDuchy = { ...myDuchy, resources: newResources };
 

@@ -167,7 +167,7 @@ export function subtractCost(resources: Resources, cost: Partial<Resources>): Re
 
 // ─── Turn processing ──────────────────────────────────────────────────────────
 
-export function harvestResources(duchy: Duchy, map: WorldMap): Resources {
+export function harvestResources(duchy: Duchy): Resources {
   const gained: Partial<Resources> = {};
 
   // Buildings produce all resources — tile resources removed

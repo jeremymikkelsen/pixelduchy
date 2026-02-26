@@ -4,6 +4,7 @@ import { generateWorld } from '../game/procgen/worldgen';
 import {
   harvestResources,
   generateKingDemand,
+  getValidBuildingsForTile,
   subtractCost,
   canAfford,
   BUILDING_COSTS,
@@ -118,16 +119,22 @@ export const useGameStore = create<GameStore>((set, get) => ({
       }
     }
 
-    const starterBuildingTypes: BuildingType[] = ['castle', 'market', 'house', 'house'];
-    const starterBuildings: DuchyBuilding[] = buildingSlots
-      .slice(0, starterBuildingTypes.length)
-      .map((t, i) => ({
-        id: `starter-${i}`,
-        type: starterBuildingTypes[i],
-        tileX: t.x,
-        tileY: t.y,
-        level: 1,
-      }));
+    // Plains-required buildings (field, pasture) must go on plains tiles
+    const plainsSlots = buildingSlots.filter(p => map.tiles[p.y]?.[p.x]?.type === 'plains');
+    const starterBuildings: DuchyBuilding[] = [];
+    const usedSlots = new Set<string>();
+
+    const tryPlace = (type: BuildingType, slots: typeof buildingSlots) => {
+      const slot = slots.find(s => !usedSlots.has(`${s.x},${s.y}`));
+      if (!slot) return;
+      starterBuildings.push({ id: `starter-${starterBuildings.length}`, type, tileX: slot.x, tileY: slot.y, level: 1 });
+      usedSlots.add(`${slot.x},${slot.y}`);
+    };
+
+    tryPlace('castle',  buildingSlots);
+    tryPlace('market',  buildingSlots);
+    tryPlace('field',   plainsSlots);
+    tryPlace('pasture', plainsSlots);
 
     // ── Generate 7 AI duchies ──────────────────────────────────────────────────
     const rng = makeRng(seed + 1);
@@ -264,6 +271,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (!session || !myDuchy) return false;
     if (!myDuchy.tiles.some(t => t.x === x && t.y === y)) return false;
     if (myDuchy.buildings.some(b => b.tileX === x && b.tileY === y)) return false;
+
+    const tile = session.map.tiles[y]?.[x];
+    if (!tile) return false;
+    if (!getValidBuildingsForTile(tile, session.map).includes(type)) return false;
 
     const cost = BUILDING_COSTS[type];
     if (!canAfford(myDuchy.resources, cost)) return false;

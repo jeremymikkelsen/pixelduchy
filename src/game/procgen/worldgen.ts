@@ -1,4 +1,4 @@
-import type { WorldMap, Tile, TileType, ResourceType } from '../../types';
+import type { WorldMap, Tile, TileType } from '../../types';
 import { generateRivers } from './rivergen';
 
 interface WorldGenOptions {
@@ -65,12 +65,12 @@ function classifyTile(elevation: number, moisture: number, distToEdge: number, m
   if (elevation > mountainThreshold) return 'mountain';
   if (moisture > 0.74) return 'wetland';
   if (moisture > 0.45) return 'forest';
-  // Desert removed — dry low-moisture land becomes plains.
   return 'plains';
 }
 
 /** Underlying biome that would exist here if mountains weren't a category.
- *  Used as the visual tile type so mountain peaks render over real terrain. */
+ *  Used as the visual tile type so mountain peaks render over real terrain.
+ *  Also determines mountain vs hill: plains → hill, forest/wetland → mountain. */
 function classifyTileUnderlying(elevation: number, moisture: number, distToEdge: number): TileType {
   const falloff = Math.pow(1 - distToEdge, 2) * 1.2;
   const e = elevation - falloff;
@@ -82,57 +82,12 @@ function classifyTileUnderlying(elevation: number, moisture: number, distToEdge:
   return 'plains';
 }
 
-// ─── Resource placement ───────────────────────────────────────────────────────
-
-/**
- * For most tile types there is one fixed resource. Forest tiles may yield
- * either timber OR deer depending on RNG — this models the real trade-off
- * between logging and hunting in the same land.
- */
-const BASE_TILE_RESOURCE: Record<TileType, ResourceType | null> = {
-  ocean:    'fish',
-  coast:    'fish',
-  plains:   'grain',
-  forest:   'timber', // some forests get 'deer' instead (see below)
-  mountain: 'ore',
-  wetland:  'cloth',
-  desert:   'spice',
-};
-
-/**
- * Resolve the resource for a single tile. For forests, 30% of tiles with a
- * resource will have deer instead of timber. Plains tiles have a 15% chance
- * to produce apples (wild orchards) instead of grain.
- */
-function resolveTileResource(type: TileType, rng: () => number): ResourceType | null {
-  const base = BASE_TILE_RESOURCE[type];
-  if (base === null) return null;
-  if (type === 'forest' && rng() < 0.30) return 'deer';
-  if (type === 'plains' && rng() < 0.15) return 'apples';
-  return base;
-}
-
-/**
- * Wildlife capacity is only meaningful for tiles that yield deer or fish.
- * Returns [capacity, currentPopulation] for the tile.
- * capacity = max harvestable per season at full population
- * current  = starts at full capacity
- */
-function resolveWildlife(resource: ResourceType | null, yield_: number): [number, number] {
-  if (resource === 'deer' || resource === 'fish') {
-    const capacity = yield_;
-    return [capacity, capacity];
-  }
-  return [0, 0];
-}
-
 // ─── Main generator ───────────────────────────────────────────────────────────
 
 export function generateWorld({ width, height, seed }: WorldGenOptions): WorldMap {
   const rng = mulberry32(seed);
 
   // Two elevation octaves mixed together: large-scale base + fine-grain detail.
-  // The fine octave breaks up the smooth hills that cause large clumpy mountain regions.
   const elevBase   = valueNoise(width, height, rng, 8);
   const elevDetail = valueNoise(width, height, rng, 16);
   const elevation  = elevBase.map((row, y) =>
@@ -160,30 +115,22 @@ export function generateWorld({ width, height, seed }: WorldGenOptions): WorldMa
         ? classifyTileUnderlying(e, m, distToEdge)
         : type;
 
-      const resource    = resolveTileResource(type, rng);
-      const hasResource = resource !== null && rng() < 0.35;
-      const yield_      = hasResource ? Math.round(1 + rng() * 4) : 0;
-      const [wildlifeCapacity, wildlifeCurrent] = hasResource
-        ? resolveWildlife(resource, yield_)
-        : [0, 0];
-
       tiles[y].push({
         x,
         y,
         type,
         visualType,
         elevation: e,
-        resource: hasResource ? resource : null,
-        resourceYield: yield_,
+        resource: null,
+        resourceYield: 0,
         duchyId: null,
-        wildlifeCapacity,
-        wildlifeCurrent,
+        wildlifeCapacity: 0,
+        wildlifeCurrent: 0,
       });
     }
   }
 
   // Post-process: reclassify mountain tiles within Chebyshev distance 2 of coast/ocean.
-  // Uses position-based RNG so resource assignment is deterministic per tile.
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       if (tiles[y][x].type !== 'mountain') continue;
@@ -198,17 +145,8 @@ export function generateWorld({ width, height, seed }: WorldGenOptions): WorldMa
       }
       if (!tooClose) continue;
       const newType: TileType = tiles[y][x].visualType ?? 'plains';
-      const tileRng = mulberry32((x * 8191 + y * 6271 + seed) >>> 0);
-      const resource    = resolveTileResource(newType, tileRng);
-      const hasResource = resource !== null && tileRng() < 0.35;
-      const yield_      = hasResource ? Math.round(1 + tileRng() * 4) : 0;
-      const [wCap, wCur] = hasResource ? resolveWildlife(resource, yield_) : [0, 0];
-      tiles[y][x].type            = newType;
-      tiles[y][x].visualType      = newType;
-      tiles[y][x].resource        = hasResource ? resource : null;
-      tiles[y][x].resourceYield   = yield_;
-      tiles[y][x].wildlifeCapacity = wCap;
-      tiles[y][x].wildlifeCurrent  = wCur;
+      tiles[y][x].type       = newType;
+      tiles[y][x].visualType = newType;
     }
   }
 

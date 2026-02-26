@@ -1,17 +1,18 @@
-import type { BuildingType, Duchy, KingDemand, ResourceType, Resources, WorldMap } from '../../types';
+import type { BuildingType, Duchy, KingDemand, ResourceType, Resources, Tile, WorldMap } from '../../types';
 
 // ─── Building data ────────────────────────────────────────────────────────────
 
 export const BUILDING_COSTS: Record<BuildingType, Partial<Resources>> = {
-  // Food production
+  // Food production — plains only
   field:      { timber: 2 },
   pasture:    { timber: 3 },
   orchard:    { timber: 2 },
+  // Water / coast
   fishery:    { timber: 4 },
   // Food processing
   smokehouse: { timber: 3 },
   kitchen:    { timber: 2, grain: 1 },
-  // Economic / existing
+  // Economic
   mill:     { grain: 5, timber: 3 },
   mine:     { timber: 4 },
   sawmill:  { timber: 3, grain: 2 },
@@ -33,7 +34,7 @@ export const BUILDING_YIELDS: Record<BuildingType, Partial<Resources>> = {
   // Food processing
   smokehouse: { smoked_meat: 2 },
   kitchen:    { bread: 2 },
-  // Economic / existing
+  // Economic
   mill:     { grain: 4 },
   mine:     { ore: 4 },
   sawmill:  { timber: 4 },
@@ -62,22 +63,91 @@ export const BUILDING_LABELS: Record<BuildingType, string> = {
 };
 
 export const BUILDING_DESCRIPTIONS: Record<BuildingType, string> = {
-  field:      '+3 grain/turn',
-  pasture:    '+2 cattle/turn',
-  orchard:    '+2 apples/turn',
-  fishery:    '+3 fish/turn',
+  field:      '+3 grain/turn (plains)',
+  pasture:    '+2 cattle/turn (plains)',
+  orchard:    '+2 apples/turn (plains)',
+  fishery:    '+3 fish/turn (coast/river)',
   smokehouse: '+2 smoked meat/turn',
   kitchen:    '+2 bread/turn',
-  mill:     '+4 grain/turn',
-  mine:     '+4 ore/turn',
-  sawmill:  '+4 timber/turn',
-  port:     '+3 fish, +1 gold/turn',
-  barracks: '+10 military strength',
-  market:   '+3 gold/turn',
+  mill:     '+4 grain/turn (river or hill)',
+  mine:     '+4 ore/turn (mountain)',
+  sawmill:  '+4 timber/turn (river/hill + forest)',
+  port:     '+3 fish, +1 gold/turn (coast/river)',
+  barracks: '+10 military strength (plains)',
+  market:   '+3 gold/turn (plains)',
   church:   '+3 favor on build',
   castle:   '+2 gold/turn',
-  house:    '+10 population capacity',
+  house:    '+10 population capacity (plains)',
 };
+
+// ─── Terrain helpers ──────────────────────────────────────────────────────────
+
+/** True if the tile is a hill: mountain elevation but plains underlying biome. */
+export function isHillTile(tile: Tile): boolean {
+  return tile.type === 'mountain' && (tile.visualType ?? tile.type) === 'plains';
+}
+
+/** True if the tile sits on a river segment. */
+export function isRiverTile(tile: Tile, map: WorldMap): boolean {
+  return (map.rivers ?? []).some(path =>
+    path.some(p => p.x === tile.x && p.y === tile.y),
+  );
+}
+
+/** True if any 4-directional neighbour of this tile is forest. */
+function hasAdjacentForest(tile: Tile, map: WorldMap): boolean {
+  return (
+    [[1,0],[-1,0],[0,1],[0,-1]] as [number,number][]
+  ).some(([dx, dy]) => map.tiles[tile.y + dy]?.[tile.x + dx]?.type === 'forest');
+}
+
+/**
+ * Returns which building types may be placed on a tile based on terrain rules:
+ *   mine      — mountain tiles only
+ *   port      — coast or river
+ *   fishery   — coast or river
+ *   mill      — river or hill
+ *   sawmill   — (river + adjacent forest) or hill
+ *   field, pasture, orchard, house, barracks, market — plains only
+ *   castle, church, smokehouse, kitchen — any non-ocean tile
+ */
+export function getValidBuildingsForTile(tile: Tile, map: WorldMap): BuildingType[] {
+  if (tile.type === 'ocean') return [];
+
+  const onRiver = isRiverTile(tile, map);
+  const hill    = isHillTile(tile);
+  const valid: BuildingType[] = [];
+
+  // Universal (any non-ocean tile)
+  valid.push('castle', 'church', 'smokehouse', 'kitchen');
+
+  // Plains only
+  if (tile.type === 'plains') {
+    valid.push('field', 'pasture', 'orchard', 'house', 'barracks', 'market');
+  }
+
+  // Mountain tiles (includes hills)
+  if (tile.type === 'mountain') {
+    valid.push('mine');
+  }
+
+  // Mill: river or hill (water / wind power)
+  if (onRiver || hill) {
+    valid.push('mill');
+  }
+
+  // Sawmill: hill (wind), or river with adjacent forest (timber supply)
+  if (hill || (onRiver && hasAdjacentForest(tile, map))) {
+    valid.push('sawmill');
+  }
+
+  // Port & fishery: coast or river
+  if (tile.type === 'coast' || onRiver) {
+    valid.push('port', 'fishery');
+  }
+
+  return valid;
+}
 
 // ─── Resource helpers ─────────────────────────────────────────────────────────
 
@@ -100,13 +170,7 @@ export function subtractCost(resources: Resources, cost: Partial<Resources>): Re
 export function harvestResources(duchy: Duchy, map: WorldMap): Resources {
   const gained: Partial<Resources> = {};
 
-  for (const { x, y } of duchy.tiles) {
-    const tile = map.tiles[y]?.[x];
-    if (tile?.resource && tile.resourceYield > 0) {
-      gained[tile.resource] = (gained[tile.resource] ?? 0) + tile.resourceYield;
-    }
-  }
-
+  // Buildings produce all resources — tile resources removed
   for (const building of duchy.buildings) {
     const yields = BUILDING_YIELDS[building.type];
     for (const [r, amt] of Object.entries(yields)) {

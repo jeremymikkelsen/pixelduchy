@@ -1,10 +1,13 @@
 import { useGameStore } from '../../store/gameStore';
 import { useUIStore } from '../../store/uiStore';
-import { BUILDING_COSTS, BUILDING_DESCRIPTIONS, canAfford } from '../../game/systems/turnEngine';
-import type { BuildingType } from '../../types';
+import {
+  BUILDING_COSTS,
+  BUILDING_DESCRIPTIONS,
+  canAfford,
+  getValidBuildingsForTile,
+  isHillTile,
+} from '../../game/systems/turnEngine';
 import { MarketPanel } from './MarketPanel';
-
-const BUILDABLE: BuildingType[] = ['house', 'mill', 'mine', 'sawmill', 'port', 'barracks', 'market', 'church', 'castle'];
 
 /**
  * TilePanel - shows tile info and a build menu when clicking an owned tile.
@@ -25,15 +28,21 @@ export function TilePanel() {
 
   const isMarket = existingBuilding?.type === 'market';
 
+  // Determine display name: hills are a sub-type of mountain
+  const displayType = tile.type === 'mountain'
+    ? (isHillTile(tile) ? 'Hill' : 'Mountain')
+    : tile.type.charAt(0).toUpperCase() + tile.type.slice(1);
+
+  const buildable = isOwned && !existingBuilding
+    ? getValidBuildingsForTile(tile, session.map)
+    : [];
+
   return (
     <div className={`panel tile-panel${isMarket ? ' tile-panel--market' : ''}`}>
       <button className="panel-close" onClick={() => setSelectedTile(null)}>✕</button>
 
-      <h3>{tile.type.charAt(0).toUpperCase() + tile.type.slice(1)} ({x}, {y})</h3>
+      <h3>{displayType} ({x}, {y})</h3>
       <p>Elevation: {tile.elevation.toFixed(2)}</p>
-      {tile.resource && (
-        <p>Resource: <strong>{tile.resource}</strong> ({tile.resourceYield}/turn)</p>
-      )}
 
       {isOwned ? (
         <div className="build-section">
@@ -44,17 +53,19 @@ export function TilePanel() {
                 <MarketPanel resources={resources!} />
               </>
             ) : (
-            <p className="building-existing">
-              🏗 <strong>{existingBuilding.type}</strong> (Lv {existingBuilding.level})
-              <br />
-              <span className="building-desc">{BUILDING_DESCRIPTIONS[existingBuilding.type]}</span>
-            </p>
+              <p className="building-existing">
+                🏗 <strong>{existingBuilding.type}</strong> (Lv {existingBuilding.level})
+                <br />
+                <span className="building-desc">{BUILDING_DESCRIPTIONS[existingBuilding.type]}</span>
+              </p>
             )
+          ) : buildable.length === 0 ? (
+            <p className="tile-unowned">No buildings available for this terrain.</p>
           ) : (
             <>
               <p className="build-header">Construct building:</p>
               <div className="build-list">
-                {BUILDABLE.map((type) => {
+                {buildable.map((type) => {
                   const cost = BUILDING_COSTS[type];
                   const affordable = resources ? canAfford(resources, cost) : false;
                   const costStr = Object.entries(cost).map(([r, n]) => `${n} ${r}`).join(', ');
@@ -68,7 +79,7 @@ export function TilePanel() {
                     >
                       <span className="build-name">{type}</span>
                       <span className="build-desc">{BUILDING_DESCRIPTIONS[type]}</span>
-                      <span className="build-cost">{costStr}</span>
+                      <span className="build-cost">{costStr || 'free'}</span>
                     </button>
                   );
                 })}

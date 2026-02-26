@@ -505,38 +505,64 @@ export class MapScene extends Phaser.Scene {
 
   // ─── Mountain peaks ───────────────────────────────────────────────────────────
 
-  /** Bakes mountain overlays — one large peak per cluster (at the main summit)
-   *  plus 0–4 smaller peaks at secondary summits, giving 1–5 mountains per
-   *  connected mountain region. In winter every peak is fully snow-covered. */
+  /** Bakes mountain/hill overlays per cluster.
+   *  Clusters in plains terrain → squat hill bumps (no snow, earthy palette).
+   *  Clusters in forest/wetland terrain → tall snow-capped mountain peaks. */
   private renderMountains() {
     const g = this.make.graphics({}, false);
     const { tiles, width, height } = this.world;
     const clusters = computeMountainClusters(tiles, width, height);
     const season = this.currentSeasonIndex;
 
-    const palettes = season === 3 ? ROCK_PALETTES_WINTER : ROCK_PALETTES;
+    const mtnPals  = season === 3 ? ROCK_PALETTES_WINTER : ROCK_PALETTES;
+    const hillPals = season === 3 ? HILL_PALETTES_WINTER : HILL_PALETTES;
 
-    // Pass 1 — secondary (small/medium) peaks: bare rock, no snow.
+    // Classify each cluster as hill (plains underlying) or mountain (forest/wetland)
+    const isHillCluster = (cluster: MountainCluster): boolean => {
+      const plainsCount = cluster.tiles.filter(
+        t => (tiles[t.y][t.x].visualType ?? tiles[t.y][t.x].type) === 'plains',
+      ).length;
+      return plainsCount > cluster.tiles.length / 2;
+    };
+
+    // Pass 1 — secondary bumps/peaks drawn first (sit behind main peak)
     for (const [ci, cluster] of clusters.entries()) {
-      const pal = palettes[ci % palettes.length];
+      const hill = isHillCluster(cluster);
+      const pal = hill
+        ? hillPals[ci % hillPals.length]
+        : mtnPals[ci % mtnPals.length];
+
       for (const pt of cluster.secondarySummits) {
         const rng = makeRng((pt.x * 7919 + pt.y * 6271 + 99) >>> 0);
         const cx = pt.x * TILE_SIZE + TILE_SIZE * 0.5;
         const cy = pt.y * TILE_SIZE + TILE_SIZE * 0.5;
-        const radius = TILE_SIZE * (0.70 + rng() * 0.90); // 0.7–1.6 tiles
-        drawSnowPeak(g, cx, cy, radius, rng, season, false, pal.dark, pal.light);
+        if (hill) {
+          const radius = TILE_SIZE * (0.28 + rng() * 0.32); // 0.28–0.60 tiles
+          drawHillPeak(g, cx, cy, radius, rng, pal.dark, pal.light);
+        } else {
+          const radius = TILE_SIZE * (0.70 + rng() * 0.90); // 0.7–1.6 tiles
+          drawSnowPeak(g, cx, cy, radius, rng, season, false, pal.dark, pal.light);
+        }
       }
     }
 
-    // Pass 2 — main (big) peak: snow-capped, drawn on top.
+    // Pass 2 — main peak/hill drawn on top
     for (const [ci, cluster] of clusters.entries()) {
-      const pal = palettes[ci % palettes.length];
+      const hill = isHillCluster(cluster);
+      const pal = hill
+        ? hillPals[ci % hillPals.length]
+        : mtnPals[ci % mtnPals.length];
       const pt = cluster.mainSummit;
       const rng = makeRng((pt.x * 7919 + pt.y * 6271 + 42) >>> 0);
       const cx = pt.x * TILE_SIZE + TILE_SIZE * 0.5;
       const cy = pt.y * TILE_SIZE + TILE_SIZE * 0.5;
-      const radius = TILE_SIZE * (2.0 + rng() * 1.0); // 2–3 tiles wide
-      drawSnowPeak(g, cx, cy, radius, rng, season, true, pal.dark, pal.light);
+      if (hill) {
+        const radius = TILE_SIZE * (0.70 + rng() * 0.55); // 0.7–1.25 tiles
+        drawHillPeak(g, cx, cy, radius, rng, pal.dark, pal.light);
+      } else {
+        const radius = TILE_SIZE * (2.0 + rng() * 1.0); // 2–3 tiles
+        drawSnowPeak(g, cx, cy, radius, rng, season, true, pal.dark, pal.light);
+      }
     }
 
     this.mountainLayer.clear();
@@ -1474,6 +1500,22 @@ const ROCK_PALETTES_WINTER = [
   { dark: 0x405058, light: 0x7890a0 }, // icy mossy
 ];
 
+// Hill palettes — earthy tones (plains context: tans, warm browns, mossy greens)
+const HILL_PALETTES = [
+  { dark: 0x4a3e1c, light: 0x907848 }, // warm sandy brown
+  { dark: 0x3a3818, light: 0x706a38 }, // olive
+  { dark: 0x3c2e14, light: 0x806030 }, // golden tan
+  { dark: 0x303818, light: 0x607038 }, // grassy green
+  { dark: 0x402c18, light: 0x805040 }, // reddish earth
+];
+const HILL_PALETTES_WINTER = [
+  { dark: 0x505848, light: 0x909888 }, // frosted brown
+  { dark: 0x485040, light: 0x888878 }, // frosted olive
+  { dark: 0x504838, light: 0x908070 }, // frosted tan
+  { dark: 0x485040, light: 0x808870 }, // frosted green
+  { dark: 0x504440, light: 0x908070 }, // frosted reddish
+];
+
 /** Linearly interpolates between two packed RGB hex colours. t ∈ [0,1]. */
 function lerpHex(a: number, b: number, t: number): number {
   const ar = (a >> 16) & 0xff, ag = (a >> 8) & 0xff, ab = a & 0xff;
@@ -1481,6 +1523,49 @@ function lerpHex(a: number, b: number, t: number): number {
   return (Math.round(ar + (br - ar) * t) << 16)
        | (Math.round(ag + (bg - ag) * t) << 8)
        |  Math.round(ab + (bb - ab) * t);
+}
+
+/**
+ * Squat, rounded hill — fewer faces, much flatter than a mountain peak, no snow.
+ * Used for mountain tiles whose underlying biome is plains.
+ */
+function drawHillPeak(
+  g: Phaser.GameObjects.Graphics,
+  cx: number, cy: number,
+  radius: number,
+  rng: () => number,
+  rockDark: number,
+  rockLight: number,
+): void {
+  const LIGHT = -Math.PI * 0.75;
+  const N = 5; // fewer faces → rounder, gentler silhouette
+  const ry    = radius * 0.30; // much flatter than mountain (0.46)
+  const peakX = cx + (rng() - 0.5) * radius * 0.05;
+  const peakY = cy - ry * 0.68; // low apex — less pointy
+
+  const base: { x: number; y: number }[] = [];
+  for (let i = 0; i < N; i++) {
+    const a   = (i / N) * Math.PI * 2 - Math.PI / 2;
+    const jit = 0.86 + rng() * 0.22; // tighter jitter → smoother outline
+    base.push({
+      x: cx + Math.cos(a) * radius * jit,
+      y: cy + Math.sin(a) * ry * jit * 0.65 + ry * 0.65,
+    });
+  }
+
+  for (let i = 0; i < N; i++) {
+    const b0 = base[i], b1 = base[(i + 1) % N];
+    const mx = (b0.x + b1.x) / 2, my = (b0.y + b1.y) / 2;
+    const t  = Math.cos(Math.atan2(my - peakY, mx - peakX) - LIGHT) * 0.5 + 0.5;
+    g.fillStyle(lerpHex(rockDark, rockLight, t), 1.0);
+    g.fillPoints([{ x: peakX, y: peakY }, b0, b1], true);
+  }
+
+  // Subtle low-contrast cracks
+  g.lineStyle(1.0, 0x181410, 0.22);
+  for (let i = 0; i < N; i++) {
+    g.lineBetween(peakX, peakY, base[i].x, base[i].y);
+  }
 }
 
 /**

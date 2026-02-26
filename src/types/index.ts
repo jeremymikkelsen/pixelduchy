@@ -70,6 +70,10 @@ export interface Tile {
   x: number;
   y: number;
   type: TileType;
+  /** Visual biome to render for mountain tiles — the biome that would exist
+   *  here without the mountain elevation check (forest / plains / wetland).
+   *  Equals type for all non-mountain tiles. Absent in older saves (fall back to type). */
+  visualType?: TileType;
   resource: ResourceType | null;
   resourceYield: number;
   elevation: number;

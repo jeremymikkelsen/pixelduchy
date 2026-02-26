@@ -69,6 +69,19 @@ function classifyTile(elevation: number, moisture: number, distToEdge: number, m
   return 'plains';
 }
 
+/** Underlying biome that would exist here if mountains weren't a category.
+ *  Used as the visual tile type so mountain peaks render over real terrain. */
+function classifyTileUnderlying(elevation: number, moisture: number, distToEdge: number): TileType {
+  const falloff = Math.pow(1 - distToEdge, 2) * 1.2;
+  const e = elevation - falloff;
+  if (e < 0.25) return 'ocean';
+  if (e < 0.34) return 'coast';
+  // No mountain branch — fall through to moisture-based biome
+  if (moisture > 0.74) return 'wetland';
+  if (moisture > 0.45) return 'forest';
+  return 'plains';
+}
+
 // ─── Resource placement ───────────────────────────────────────────────────────
 
 /**
@@ -143,6 +156,9 @@ export function generateWorld({ width, height, seed }: WorldGenOptions): WorldMa
       const e = elevation[y][x];
       const m = moisture[y][x];
       const type = classifyTile(e, m, distToEdge, mountainThreshold);
+      const visualType = type === 'mountain'
+        ? classifyTileUnderlying(e, m, distToEdge)
+        : type;
 
       const resource    = resolveTileResource(type, rng);
       const hasResource = resource !== null && rng() < 0.35;
@@ -155,6 +171,7 @@ export function generateWorld({ width, height, seed }: WorldGenOptions): WorldMa
         x,
         y,
         type,
+        visualType,
         elevation: e,
         resource: hasResource ? resource : null,
         resourceYield: yield_,

@@ -62,16 +62,16 @@ export class MapScene extends Phaser.Scene {
     this.biomeTransitionLayer = this.add.renderTexture(0, 0, rtW, rtH).setDepth(0.35).setOrigin(0, 0).setScale(2);
     this.beachLayer           = this.add.renderTexture(0, 0, rtW, rtH).setDepth(0.42).setOrigin(0, 0).setScale(2);
     this.riverLayer           = this.add.renderTexture(0, 0, rtW, rtH).setDepth(0.5).setOrigin(0, 0).setScale(2);
-    this.vegetationLayer      = this.add.renderTexture(0, 0, rtW, rtH).setDepth(0.55).setOrigin(0, 0).setScale(2);
-    this.mountainLayer        = this.add.renderTexture(0, 0, rtW, rtH).setDepth(0.60).setOrigin(0, 0).setScale(2);
+    this.mountainLayer        = this.add.renderTexture(0, 0, rtW, rtH).setDepth(0.55).setOrigin(0, 0).setScale(2);
+    this.vegetationLayer      = this.add.renderTexture(0, 0, rtW, rtH).setDepth(0.60).setOrigin(0, 0).setScale(2);
     this.territoryLayer       = this.add.renderTexture(0, 0, rtW, rtH).setDepth(1).setOrigin(0, 0).setScale(2);
 
     this.renderTileLayer();
     this.renderBiomeTransitions();
     this.renderBeach();
     this.renderRivers();
-    this.renderVegetation();
     this.renderMountains();
+    this.renderVegetation();
     this.setupCamera();
     this.setupInput();
 
@@ -138,7 +138,7 @@ export class MapScene extends Phaser.Scene {
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         this.tileLayer.batchDrawFrame(
-          this.tileKey(tiles[y][x].type, x, y), undefined, x * TILE_SIZE, y * TILE_SIZE,
+          this.tileKey(tiles[y][x].visualType ?? tiles[y][x].type, x, y), undefined, x * TILE_SIZE, y * TILE_SIZE,
         );
       }
     }
@@ -158,7 +158,8 @@ export class MapScene extends Phaser.Scene {
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const tile = tiles[y][x];
-        if (tile.type === 'ocean' || tile.type === 'coast') continue;
+        const tileVis = tile.visualType ?? tile.type;
+        if (tileVis === 'ocean' || tileVis === 'coast') continue;
 
         const dirs = [
           { dx: 1, dy: 0 }, { dx: -1, dy: 0 },
@@ -169,8 +170,9 @@ export class MapScene extends Phaser.Scene {
           const nx = x + dx, ny = y + dy;
           if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
           const neighbor = tiles[ny][nx];
-          // Skip same-type, ocean, and coast (beach overlay handles coast boundaries)
-          if (neighbor.type === tile.type || neighbor.type === 'ocean' || neighbor.type === 'coast') continue;
+          const neighborVis = neighbor.visualType ?? neighbor.type;
+          // Skip same visual type, ocean, and coast (beach overlay handles coast boundaries)
+          if (neighborVis === tileVis || neighborVis === 'ocean' || neighborVis === 'coast') continue;
 
           // Unique, reproducible seed per directed edge (tile → neighbor direction)
           const rng = makeRng(((x * 7919 + y * 6271 + (dx + 2) * 3581 + (dy + 2) * 4127) * 2053) >>> 0);
@@ -179,8 +181,8 @@ export class MapScene extends Phaser.Scene {
           const edgeCX = (x + 0.5 + dx * 0.5) * TS;
           const edgeCY = (y + 0.5 + dy * 0.5) * TS;
 
-          const isForestEdge  = tile.type === 'forest'  || neighbor.type === 'forest';
-          const isWetlandEdge = tile.type === 'wetland' || neighbor.type === 'wetland';
+          const isForestEdge  = tileVis === 'forest'  || neighborVis === 'forest';
+          const isWetlandEdge = tileVis === 'wetland' || neighborVis === 'wetland';
           const count = isForestEdge  ? 4 + Math.floor(rng() * 3)
                       : isWetlandEdge ? 3 + Math.floor(rng() * 3)
                       : 2 + Math.floor(rng() * 2);
@@ -193,7 +195,7 @@ export class MapScene extends Phaser.Scene {
             const px = edgeCX + (-dy) * along - dx * depth;
             const py = edgeCY + ( dx) * along - dy * depth;
 
-            this.drawTransitionDecoration(g, tile.type, neighbor.type, px, py, rng, season);
+            this.drawTransitionDecoration(g, tileVis, neighborVis, px, py, rng, season);
           }
         }
       }
@@ -421,7 +423,7 @@ export class MapScene extends Phaser.Scene {
 
     // ── Scatter solitary trees on non-forest tiles (coast and ocean excluded)
     const SCATTER_CHANCE: Partial<Record<string, number>> = {
-      wetland: 0.14, mountain: 0.05,
+      wetland: 0.14,
     };
     for (let ty = 0; ty < height; ty++) {
       for (let tx = 0; tx < width; tx++) {
@@ -1446,15 +1448,6 @@ function drawSnowPeak(
       y: cy + Math.sin(a) * ry * jit * 0.55 + ry * 0.55,
     });
   }
-
-  // Shadow ellipse
-  g.fillStyle(0x000000, 0.26);
-  g.fillEllipse(cx + radius * 0.14, cy + ry * 1.12, radius * 2.2, ry * 1.15);
-
-  // Green grass / moss at base
-  const grassCol = season === 2 ? 0x9a7838 : season === 3 ? 0x5e7050 : 0x426e2e;
-  g.fillStyle(grassCol, 0.72);
-  g.fillEllipse(cx, cy + ry * 0.50, radius * 2.0, ry * 1.10);
 
   // Rock body — N triangular faces, each shaded by light angle
   // Winter: icy blue-grey rock; other seasons: dark charcoal

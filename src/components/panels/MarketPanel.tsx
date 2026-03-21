@@ -1,6 +1,7 @@
 import { useUIStore } from '../../store/uiStore';
 import { useGameStore } from '../../store/gameStore';
 import type { ResourceType } from '../../state/Economy';
+import { getMarketPrice, BASE_MARKET_PRICES } from '../../state/Economy';
 
 const TRADEABLE: { key: ResourceType; label: string; icon: string }[] = [
   { key: 'grain',       label: 'Grain',       icon: '🌾' },
@@ -19,24 +20,26 @@ const TRADEABLE: { key: ResourceType; label: string; icon: string }[] = [
   { key: 'deer',        label: 'Deer',        icon: '🦌' },
 ];
 
-// Simple static prices — will be replaced by dynamic market engine later
-const BASE_PRICES: Partial<Record<ResourceType, number>> = {
-  grain: 2, cattle: 4, fish: 3, apples: 2, timber: 3, ore: 5,
-  stone: 4, iron: 8, cloth: 6, bread: 3, cheese: 5, smoked_meat: 6,
-  pie: 7, deer: 4,
-};
+function priceTrend(dynamicBuy: number, key: ResourceType): string {
+  const base = BASE_MARKET_PRICES[key] ?? 5;
+  if (dynamicBuy > base) return ' ↑';
+  if (dynamicBuy < base) return ' ↓';
+  return '';
+}
 
 export function MarketPanel() {
   const { openPanel, setOpenPanel } = useUIStore();
-  const { playerEconomy, gameState } = useGameStore();
+  const { playerEconomy, playerHouse, gameState } = useGameStore();
 
   if (openPanel !== 'market' || !playerEconomy || !gameState) return null;
 
   const { resources } = playerEconomy;
   const gold = resources.gold;
+  const house = playerHouse ?? null;
 
   function buy(key: ResourceType) {
-    const price = BASE_PRICES[key] ?? 5;
+    const stock = resources[key] ?? 0;
+    const price = getMarketPrice(key, stock, house, true);
     if (gold < price) return;
     const eco = gameState!.economies[gameState!.playerDuchy];
     eco.resources.gold -= price;
@@ -45,8 +48,9 @@ export function MarketPanel() {
   }
 
   function sell(key: ResourceType) {
-    if ((resources[key] ?? 0) < 1) return;
-    const price = Math.max(1, Math.floor((BASE_PRICES[key] ?? 5) * 0.7));
+    const stock = resources[key] ?? 0;
+    if (stock < 1) return;
+    const price = getMarketPrice(key, stock, house, false);
     const eco = gameState!.economies[gameState!.playerDuchy];
     eco.resources[key] -= 1;
     eco.resources.gold += price;
@@ -72,8 +76,9 @@ export function MarketPanel() {
           <tbody>
             {TRADEABLE.map(({ key, label, icon }) => {
               const stock = resources[key] ?? 0;
-              const buyPrice = BASE_PRICES[key] ?? 5;
-              const sellPrice = Math.max(1, Math.floor(buyPrice * 0.7));
+              const buyPrice = getMarketPrice(key, stock, house, true);
+              const sellPrice = getMarketPrice(key, stock, house, false);
+              const trend = priceTrend(buyPrice, key);
               const canBuy = gold >= buyPrice;
               const canSell = stock > 0;
               return (
@@ -86,7 +91,7 @@ export function MarketPanel() {
                       disabled={!canBuy}
                       onClick={() => buy(key)}
                     >
-                      {buyPrice}g
+                      {buyPrice}g{trend}
                     </button>
                   </td>
                   <td className="fp-num">

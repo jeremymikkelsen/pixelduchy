@@ -7,8 +7,8 @@ export function PopulationPanel() {
 
   if (openPanel !== 'population' || !playerEconomy) return null;
 
-  const { population } = playerEconomy;
-  const { total, farmers, artisans, merchants, soldiers, happiness } = population;
+  const { population, laborAssignment } = playerEconomy;
+  const { total, happiness } = population;
 
   const happinessColor =
     happiness >= 70 ? '#78d878' :
@@ -18,10 +18,12 @@ export function PopulationPanel() {
   const emigration = happiness < 30 ? Math.floor((30 - happiness) / 10) : 0;
 
   const breakdown = [
-    { label: 'Farmers',   icon: '🌾', count: farmers },
-    { label: 'Artisans',  icon: '🔨', count: artisans },
-    { label: 'Merchants', icon: '💼', count: merchants },
-    { label: 'Soldiers',  icon: '⚔️', count: soldiers },
+    { label: 'Farmers',      icon: '🌾', count: laborAssignment.farmers },
+    { label: 'Lumberjacks',  icon: '🪓', count: laborAssignment.lumberjacks },
+    { label: 'Miners',       icon: '⛏️', count: laborAssignment.miners },
+    { label: 'Quarrymen',    icon: '🪨', count: laborAssignment.quarrymen },
+    { label: 'Smiths',       icon: '🔨', count: laborAssignment.smiths },
+    { label: 'Unemployed',   icon: '💤', count: laborAssignment.unemployed },
   ];
 
   return (

@@ -3,6 +3,16 @@
  * Adapted from pixelduchy's tile-based economy to work with Voronoi regions.
  */
 
+import type { HouseData } from './Duchy';
+import type { BuildingConsumption } from './Building';
+import {
+  getProductionModifier,
+  getSpoilageRate,
+  getGrainSurplusConversion,
+  getMarketBuyModifier,
+  getMarketSellModifier,
+} from './HouseBonus';
+
 // ─── Resource types ──────────────────────────────────────────────────────────
 
 export type ResourceType =
@@ -22,10 +32,6 @@ export interface Resources {
 
 export interface Population {
   total: number;
-  farmers: number;
-  artisans: number;
-  merchants: number;
-  soldiers: number;
   happiness: number; // 0–100
 }
 
@@ -91,7 +97,7 @@ export function starterResources(): Resources {
 }
 
 export function defaultPopulation(): Population {
-  return { total: 100, farmers: 60, artisans: 20, merchants: 15, soldiers: 5, happiness: 70 };
+  return { total: 100, happiness: 70 };
 }
 
 export function defaultLabor(): LaborAssignment {
@@ -166,16 +172,18 @@ export function computeProduction(terrain: TerrainCounts, labor: LaborAssignment
 export function processEconomyTurn(
   economy: DuchyEconomy,
   terrain: TerrainCounts,
+  house: HouseData | null = null,
 ): DuchyEconomy {
   const eco = structuredClone(economy);
 
-  // 1. Harvest resources
+  // 1. Harvest resources (with house production modifiers)
   const production = computeProduction(terrain, eco.laborAssignment);
   let totalProduced = 0;
-  for (const [key, amt] of Object.entries(production)) {
-    const k = key as ResourceType;
-    eco.resources[k] += amt ?? 0;
-    if (FOOD_KEYS.includes(k)) totalProduced += amt ?? 0;
+  for (const [key, amount] of Object.entries(production)) {
+    const mod = house ? getProductionModifier(house, key) : 1;
+    const adjusted = Math.floor((amount ?? 0) * mod);
+    eco.resources[key as ResourceType] += adjusted;
+    if (FOOD_KEYS.includes(key as ResourceType)) totalProduced += adjusted;
   }
 
   // 2. Tax income
@@ -194,9 +202,10 @@ export function processEconomyTurn(
     totalEaten += take;
   }
 
-  // 4. Spoilage (2% of remaining food)
-  const totalFoodRemaining = FOOD_KEYS.reduce((s, k) => s + (eco.resources[k] ?? 0), 0);
-  let spoilAmount = Math.ceil(totalFoodRemaining * 0.02);
+  // 4. Spoilage (house-modified rate)
+  const remainingFood = FOOD_KEYS.reduce((s, k) => s + (eco.resources[k] ?? 0), 0);
+  const spoilRate = house ? getSpoilageRate(house) : 0.02;
+  let spoilAmount = Math.ceil(remainingFood * spoilRate);
   let totalSpoiled = 0;
   for (const key of eco.foodEatOrder) {
     if (spoilAmount <= 0) break;
@@ -208,7 +217,18 @@ export function processEconomyTurn(
 
   eco.foodLedger = { produced: totalProduced, eaten: totalEaten, spoiled: totalSpoiled };
 
-  // 5. Happiness
+  // 5. Grain surplus conversion (house bonus)
+  if (house) {
+    const conv = getGrainSurplusConversion(house);
+    if (conv && eco.resources.grain > conv.threshold) {
+      const excess = eco.resources.grain - conv.threshold;
+      const goldGain = Math.floor(excess / conv.ratio);
+      eco.resources.grain -= goldGain * conv.ratio;
+      eco.resources.gold += goldGain;
+    }
+  }
+
+  // 6. Happiness
   eco.population.happiness = Math.max(0, Math.min(100,
     eco.population.happiness
     + HAPPINESS_FROM_RATIONS[eco.rationLevel]
@@ -216,38 +236,132 @@ export function processEconomyTurn(
     + (eatRemaining > 0 ? -5 : 0)  // starvation penalty
   ));
 
-  // 6. Population growth/decline
-  const happiness = eco.population.happiness;
-  const immigration = happiness > 60 ? Math.floor((happiness - 60) / 10) : 0;
-  const emigration = happiness < 30 ? Math.floor((30 - happiness) / 10) : 0;
-  eco.population.total = Math.max(10, eco.population.total + immigration - emigration);
+  // 7. Population growth/decline
+  const immigration = eco.population.happiness > 60 ? Math.floor((eco.population.happiness - 60) / 10) : 0;
+  const emigration = eco.population.happiness < 30 ? Math.floor((30 - eco.population.happiness) / 10) : 0;
+  const delta = immigration - emigration;
+  eco.population.total = Math.max(10, eco.population.total + delta);
 
-  // Redistribute population
-  const total = eco.population.total;
-  eco.population.farmers = Math.floor(total * 0.55);
-  eco.population.artisans = Math.floor(total * 0.20);
-  eco.population.merchants = Math.floor(total * 0.15);
-  eco.population.soldiers = total - eco.population.farmers - eco.population.artisans - eco.population.merchants;
-
-  // Update labor unemployed count
-  const assigned = eco.laborAssignment.farmers + eco.laborAssignment.lumberjacks
-    + eco.laborAssignment.miners + eco.laborAssignment.quarrymen + eco.laborAssignment.smiths;
-  eco.laborAssignment.unemployed = Math.max(0, total - assigned);
+  if (delta > 0) {
+    eco.laborAssignment.unemployed += delta;
+  } else if (delta < 0) {
+    let toRemove = Math.abs(delta);
+    // Remove from unemployed first
+    const fromUnemployed = Math.min(toRemove, eco.laborAssignment.unemployed);
+    eco.laborAssignment.unemployed -= fromUnemployed;
+    toRemove -= fromUnemployed;
+    // If still need to remove, scale down assigned roles
+    if (toRemove > 0) {
+      const roles: (keyof LaborAssignment)[] = ['farmers', 'lumberjacks', 'miners', 'quarrymen', 'smiths'];
+      const totalAssigned = roles.reduce((s, r) => s + eco.laborAssignment[r], 0);
+      if (totalAssigned > 0) {
+        for (const role of roles) {
+          const reduction = Math.ceil((eco.laborAssignment[role] / totalAssigned) * toRemove);
+          eco.laborAssignment[role] = Math.max(0, eco.laborAssignment[role] - reduction);
+        }
+      }
+    }
+  }
 
   // Clamp labor assignments to population
-  if (assigned > total) {
-    const scale = total / assigned;
-    eco.laborAssignment.farmers = Math.floor(eco.laborAssignment.farmers * scale);
-    eco.laborAssignment.lumberjacks = Math.floor(eco.laborAssignment.lumberjacks * scale);
-    eco.laborAssignment.miners = Math.floor(eco.laborAssignment.miners * scale);
-    eco.laborAssignment.quarrymen = Math.floor(eco.laborAssignment.quarrymen * scale);
-    eco.laborAssignment.smiths = Math.floor(eco.laborAssignment.smiths * scale);
-    const newAssigned = eco.laborAssignment.farmers + eco.laborAssignment.lumberjacks
-      + eco.laborAssignment.miners + eco.laborAssignment.quarrymen + eco.laborAssignment.smiths;
-    eco.laborAssignment.unemployed = Math.max(0, total - newAssigned);
+  const roles: (keyof LaborAssignment)[] = ['farmers', 'lumberjacks', 'miners', 'quarrymen', 'smiths'];
+  const assigned = roles.reduce((s, r) => s + eco.laborAssignment[r], 0);
+  if (assigned > eco.population.total) {
+    const scale = eco.population.total / assigned;
+    for (const role of roles) {
+      eco.laborAssignment[role] = Math.floor(eco.laborAssignment[role] * scale);
+    }
+    const newAssigned = roles.reduce((s, r) => s + eco.laborAssignment[r], 0);
+    eco.laborAssignment.unemployed = Math.max(0, eco.population.total - newAssigned);
+  } else {
+    eco.laborAssignment.unemployed = Math.max(0, eco.population.total - assigned);
   }
 
   return eco;
+}
+
+// ─── Building processing ─────────────────────────────────────────────────────
+
+/**
+ * Consume→produce pattern for a single building tick.
+ * Returns the production multiplier (0 to 1) based on available inputs.
+ */
+export function processBuilding(
+  resources: Resources,
+  consumes: BuildingConsumption | BuildingConsumption[],
+  yields: { resource: ResourceType; amount: number }[],
+): number {
+  const consumeList = Array.isArray(consumes) ? consumes : [consumes];
+
+  let minRatio = 1;
+  for (const c of consumeList) {
+    if (Array.isArray(c.resource)) {
+      // Priority list: try each resource in order
+      let remaining = c.amount;
+      for (const res of c.resource) {
+        const take = Math.min(remaining, resources[res]);
+        remaining -= take;
+        if (remaining <= 0) break;
+      }
+      const fulfilled = c.amount - remaining;
+      minRatio = Math.min(minRatio, fulfilled / c.amount);
+    } else {
+      const available = resources[c.resource];
+      minRatio = Math.min(minRatio, Math.min(available, c.amount) / c.amount);
+    }
+  }
+
+  if (minRatio <= 0) return 0;
+
+  // Actually consume
+  for (const c of consumeList) {
+    if (Array.isArray(c.resource)) {
+      let remaining = Math.floor(c.amount * minRatio);
+      for (const res of c.resource) {
+        const take = Math.min(remaining, resources[res]);
+        resources[res] -= take;
+        remaining -= take;
+        if (remaining <= 0) break;
+      }
+    } else {
+      resources[c.resource] -= Math.floor(c.amount * minRatio);
+    }
+  }
+
+  // Produce
+  for (const y of yields) {
+    resources[y.resource] += Math.floor(y.amount * minRatio);
+  }
+
+  return minRatio;
+}
+
+// ─── Dynamic market pricing ─────────────────────────────────────────────────
+
+export const BASE_MARKET_PRICES: Partial<Record<ResourceType, number>> = {
+  grain: 2, cattle: 4, fish: 3, apples: 2, timber: 3, ore: 5,
+  stone: 4, iron: 8, cloth: 6, bread: 3, cheese: 5, smoked_meat: 6,
+  pie: 7, deer: 4, gold: 1,
+};
+
+const SUPPLY_BASELINE = 20;
+
+export function getMarketPrice(
+  resource: ResourceType,
+  stock: number,
+  house: HouseData | null,
+  isBuy: boolean,
+): number {
+  const base = BASE_MARKET_PRICES[resource] ?? 5;
+  const supplyRatio = stock / SUPPLY_BASELINE;
+  const supplyMod = Math.max(0.5, Math.min(2.0, 1.5 - supplyRatio * 0.5));
+  let price = base * supplyMod;
+  if (!isBuy) price *= 0.7;
+  if (house) {
+    if (isBuy) price *= getMarketBuyModifier(house);
+    else price *= getMarketSellModifier(house);
+  }
+  return Math.max(1, Math.round(price));
 }
 
 // ─── Terrain counting ────────────────────────────────────────────────────────

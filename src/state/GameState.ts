@@ -10,6 +10,7 @@ import { Duchy } from './Duchy';
 import { generateDuchies } from './DuchyGenerator';
 import { generateRoads, RoadSegment } from '../generators/RoadGenerator';
 import { DuchyEconomy, createDuchyEconomy, processEconomyTurn, countTerrain } from './Economy';
+import { getStartingFavor } from './HouseBonus';
 import type { SaveData } from './SaveLoad';
 import { AgImprovementType, assignAgImprovements } from './AgImprovements';
 import { KingData, selectKing } from './King';
@@ -81,8 +82,11 @@ export function createGameState(seed: number, mapSize: number, playerHouse: numb
   const mines = assignMines(topo, hydro, duchies, seed, PIXEL_RESOLUTION, roads, agImprovements);
   const smelters = assignSmelters(topo, hydro, duchies, seed, PIXEL_RESOLUTION, mines, roads, agImprovements);
 
-  // Initialize economies for each duchy
-  const economies = duchies.map(() => createDuchyEconomy(50));
+  // Initialize economies for each duchy (player gets house-specific starting favor)
+  const economies = duchies.map((duchy, i) => {
+    const favor = i === playerHouse ? getStartingFavor(duchy.house) : 50;
+    return createDuchyEconomy(favor);
+  });
 
   return {
     seed,
@@ -188,7 +192,7 @@ export function advanceTurn(state: GameState): void {
     const terrain = countTerrain(
       duchy.regions, terrainTypes, duchy.hasRiver, duchy.hasForest,
     );
-    state.economies[i] = processEconomyTurn(state.economies[i], terrain);
+    state.economies[i] = processEconomyTurn(state.economies[i], terrain, duchy.house);
 
     // Woodcutter timber production
     const wc = state.woodcutters.get(i);
@@ -213,6 +217,19 @@ export function advanceTurn(state: GameState): void {
       state.economies[i].resources.ore -= consumed;
       smelter.ingotCount += consumed;
       state.economies[i].resources.iron += consumed;
+    }
+
+    // Process buildings that consume inputs
+    // For now, check if the duchy has these buildings placed
+    // TODO: Once building placement is implemented, iterate over placedBuildings instead
+    const processorTypes = ['kitchen', 'smokehouse', 'weaver', 'dairy', 'bakery'] as const;
+    for (const type of processorTypes) {
+      const def = BUILDING_DEFS[type];
+      if (def.consumes) {
+        // For now, each duchy can process if they have the resources
+        // This will be gated by actual building placement later
+        // processBuilding(eco.resources, def.consumes, def.yields);
+      }
     }
 
     // Player-placed building yields

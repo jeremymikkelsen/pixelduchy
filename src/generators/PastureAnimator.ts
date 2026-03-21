@@ -37,8 +37,8 @@ const COW_LEFT: number[][] = [
   [_, 0, _, 1],
 ];
 
-// Inset from pasture bounding box — keep cows well inside the fence line
-const EDGE_INSET = 5;
+// Inset from pasture bounding box
+const EDGE_INSET = 3;
 
 // ── Cow instance ──────────────────────────────────────────────────────────────
 interface CowState {
@@ -129,8 +129,8 @@ export class PastureAnimator {
           phaseY: rng() * Math.PI * 2,
           freqX: 0.00045 + rng() * 0.00020,
           freqY: 0.00038 + rng() * 0.00018,
-          radiusX: Math.min(safeW * 0.28, 14),
-          radiusY: Math.min(safeH * 0.22, 10),
+          radiusX: Math.min(safeW * 0.35, 18),
+          radiusY: Math.min(safeH * 0.30, 14),
           mirrorBase: rng() > 0.5,
         });
       }
@@ -199,6 +199,12 @@ export class PastureAnimator {
         const facingRight = cow.mirrorBase ? vx > 0 : vx <= 0;
         const sprite = facingRight ? COW_RIGHT : COW_LEFT;
 
+        // Check if the cow's center pixel is inside the pasture region —
+        // if so, draw the entire sprite (no per-pixel clipping, which causes
+        // cows to show as 2-pixel fragments at Voronoi boundary edges)
+        const centerSrcIdx = (sy + 1) * N + (sx + 2);
+        if (!pasture.validPixels.has(centerSrcIdx)) continue;
+
         for (let row = 0; row < COW_H; row++) {
           for (let col = 0; col < COW_W; col++) {
             const cell = sprite[row][col];
@@ -208,12 +214,13 @@ export class PastureAnimator {
             if (px < 0 || px >= N || py < 0 || py >= N) continue;
 
             const srcIdx = py * N + px;
-
-            // Only draw on pixels that actually belong to this pasture
-            if (!pasture.validPixels.has(srcIdx)) continue;
-
             const screenIdx = this._screenIdx(srcIdx, N, ext);
             if (screenIdx < 0) continue;
+
+            // Save base color for restoration (may be outside validPixels near edges)
+            if (!pasture.baseColors.has(srcIdx)) {
+              pasture.baseColors.set(srcIdx, pixels[screenIdx]);
+            }
 
             pixels[screenIdx] = cell === 0 ? COW_BODY : COW_PATCH;
             pasture.dirtyScreen.push({ screenIdx, srcIdx });

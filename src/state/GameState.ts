@@ -13,7 +13,8 @@ import { DuchyEconomy, createDuchyEconomy, processEconomyTurn, countTerrain } fr
 import type { SaveData } from './SaveLoad';
 import { AgImprovementType, assignAgImprovements } from './AgImprovements';
 import { KingData, selectKing } from './King';
-import type { WoodcutterState, FishingCampState, MineState, SmelterState } from './Building';
+import type { WoodcutterState, FishingCampState, MineState, SmelterState, BuildingInstance, BuildingType } from './Building';
+import { BUILDING_DEFS, canPlaceOnTerrain, canAffordBuilding } from './Building';
 import { assignWoodcutters } from './WoodcutterAssignment';
 import { assignFishingCamps } from './FishingCampAssignment';
 import { assignMines } from './MineAssignment';
@@ -53,6 +54,10 @@ export interface GameState {
   mines: Map<number, MineState>;
   // Smelters — only duchies with mines (duchyIndex → state)
   smelters: Map<number, SmelterState>;
+  // Player-placed buildings (region → building)
+  buildings: BuildingInstance[];
+  _nextBuildingId: number;
+
   // Tree trunk positions permanently removed by woodcutters (pixel indices: y * N + x)
   removedTrees: Set<number>;
 }
@@ -98,6 +103,8 @@ export function createGameState(seed: number, mapSize: number, playerHouse: numb
     fishingCamps,
     mines,
     smelters,
+    buildings: [],
+    _nextBuildingId: 1,
     removedTrees: new Set(),
   };
 }
@@ -159,6 +166,8 @@ export function loadGameState(save: SaveData): GameState {
     fishingCamps,
     mines,
     smelters,
+    buildings: save.buildings ?? [],
+    _nextBuildingId: save._nextBuildingId ?? 1,
     removedTrees: new Set(save.removedTrees ?? []),
   };
 }
@@ -205,5 +214,71 @@ export function advanceTurn(state: GameState): void {
       smelter.ingotCount += consumed;
       state.economies[i].resources.iron += consumed;
     }
+
+    // Player-placed building yields
+    for (const b of state.buildings) {
+      if (b.duchyIndex !== i) continue;
+      const def = BUILDING_DEFS[b.type];
+      for (const y of def.yields) {
+        const key = y.resource as keyof typeof state.economies[0]['resources'];
+        state.economies[i].resources[key] += y.amount * b.level;
+      }
+      // Favor from buildings like church
+      if (def.favorOnBuild > 0 && b.level === 1) {
+        // favorOnBuild is a one-time bonus, already applied at placement
+      }
+    }
   }
+}
+
+/**
+ * Attempt to place a building on a region for a duchy.
+ * Returns true if successful, false if placement is invalid or unaffordable.
+ */
+export function placeBuilding(
+  state: GameState,
+  duchyIndex: number,
+  region: number,
+  buildingType: BuildingType,
+  hasRiver: boolean,
+  hasForest: boolean,
+): boolean {
+  const def = BUILDING_DEFS[buildingType];
+  const terrain = state.topo.terrainType[region];
+  const eco = state.economies[duchyIndex];
+
+  // Validate ownership
+  if (state.regionToDuchy[region] !== duchyIndex) return false;
+
+  // Validate terrain
+  if (!canPlaceOnTerrain(def, terrain, hasRiver, hasForest)) return false;
+
+  // Validate affordability
+  const res = eco.resources as unknown as Record<string, number>;
+  if (!canAffordBuilding(def, res)) return false;
+
+  // Check region isn't already occupied by a player-placed building
+  if (state.buildings.some(b => b.region === region)) return false;
+
+  // Deduct costs
+  for (const [resource, amount] of Object.entries(def.cost)) {
+    const key = resource as keyof typeof eco.resources;
+    eco.resources[key] -= amount ?? 0;
+  }
+
+  // Place building
+  state.buildings.push({
+    id: state._nextBuildingId++,
+    type: buildingType,
+    region,
+    level: 1,
+    duchyIndex,
+  });
+
+  // One-time favor bonus
+  if (def.favorOnBuild > 0) {
+    eco.kingsFavor += def.favorOnBuild;
+  }
+
+  return true;
 }

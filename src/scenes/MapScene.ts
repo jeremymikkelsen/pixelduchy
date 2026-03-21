@@ -1021,6 +1021,16 @@ export class MapScene extends Phaser.Scene {
       treeMask = treeResult.treeMask;
     });
 
+    // Orchard trees — stamp sprite-based apple trees in neat rows
+    _mark('orchard_trees', () => {
+      if (this._state.agImprovements && renderer.regionGrid) {
+        farmRenderer.renderOrchardTrees(
+          pixels, PIXEL_RESOLUTION, this._state.agImprovements,
+          renderer.regionGrid, seed, season,
+        );
+      }
+    });
+
     // 4. Now mark targets as removed for next season
     for (const key of targetKeys) this._state.removedTrees.add(key);
 

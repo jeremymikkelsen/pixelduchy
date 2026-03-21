@@ -95,6 +95,126 @@ const CROP_SUMMER_COLORS: Record<string, number[]> = {
   rye:      [0x283818, 0x385018, 0x508830, 0x407828, 0x78a038, 0x689030],
 };
 
+// ── Orchard tree sprites — 75% of small deciduous (5×7 → 5×5 / 5×6) ─────────
+// Cell types: 0 = transparent, 1 = trunk, 2 = canopy
+
+const ORCHARD_TEMPLATES: { w: number; h: number; data: number[] }[] = [
+  // Compact round (5×5) — 75% of small deciduous 5×7
+  { w: 5, h: 5, data: [
+    0, 2, 2, 2, 0,
+    2, 2, 2, 2, 2,
+    2, 2, 2, 2, 2,
+    0, 2, 2, 2, 0,
+    0, 0, 1, 0, 0,
+  ]},
+  // Taller round (5×6)
+  { w: 5, h: 6, data: [
+    0, 0, 2, 0, 0,
+    0, 2, 2, 2, 0,
+    2, 2, 2, 2, 2,
+    2, 2, 2, 2, 2,
+    0, 2, 2, 2, 0,
+    0, 0, 1, 0, 0,
+  ]},
+  // Scalloped (5×5)
+  { w: 5, h: 5, data: [
+    0, 2, 2, 0, 0,
+    2, 2, 2, 2, 0,
+    2, 2, 2, 2, 2,
+    0, 2, 2, 2, 0,
+    0, 0, 1, 0, 0,
+  ]},
+  // Wide low (5×5) — slightly asymmetric
+  { w: 5, h: 5, data: [
+    0, 2, 2, 2, 0,
+    2, 2, 2, 2, 2,
+    0, 2, 2, 2, 2,
+    0, 2, 2, 2, 0,
+    0, 0, 1, 0, 0,
+  ]},
+];
+
+// Bare orchard trees for winter (all pixels are trunk/branch)
+const ORCHARD_BARE_TEMPLATES: { w: number; h: number; data: number[] }[] = [
+  // Forked top
+  { w: 5, h: 5, data: [
+    0, 1, 0, 1, 0,
+    0, 0, 1, 0, 0,
+    0, 0, 1, 0, 0,
+    0, 0, 1, 0, 0,
+    0, 0, 1, 0, 0,
+  ]},
+  // Three prongs
+  { w: 5, h: 6, data: [
+    1, 0, 1, 0, 1,
+    0, 1, 1, 1, 0,
+    0, 0, 1, 0, 0,
+    0, 0, 1, 0, 0,
+    0, 0, 1, 0, 0,
+    0, 0, 1, 0, 0,
+  ]},
+  // Bent with stub
+  { w: 5, h: 5, data: [
+    0, 0, 1, 0, 0,
+    0, 0, 1, 1, 0,
+    0, 1, 1, 0, 0,
+    0, 0, 1, 0, 0,
+    0, 0, 1, 0, 0,
+  ]},
+  // Simple Y
+  { w: 5, h: 5, data: [
+    0, 1, 0, 1, 0,
+    0, 1, 0, 1, 0,
+    0, 0, 1, 0, 0,
+    0, 0, 1, 0, 0,
+    0, 0, 1, 0, 0,
+  ]},
+];
+
+// Lighting direction (matches TreeRenderer)
+const ORCHARD_LIGHT_X = -0.707;
+const ORCHARD_LIGHT_Y = -0.707;
+
+// ── Orchard palettes ─────────────────────────────────────────────────────────
+interface OrchardPalette {
+  canopy: number[];   // 5 shades: shadow → highlight (RGB hex)
+  trunk: number[];    // 2 shades: light, dark
+  apple?: number;     // fall only: red apple RGB hex
+}
+
+function getOrchardPalette(season: Season, _seed: number): OrchardPalette {
+  switch (season) {
+    case Season.Spring:
+      return {
+        canopy: [0x2a6028, 0x3a7c38, 0x4c9848, 0x60b058, 0x78c868],
+        trunk: [0x8a7860, 0x5a4a38],
+      };
+    case Season.Summer:
+      return {
+        canopy: [0x1f4a22, 0x2d6630, 0x3a8040, 0x50a048, 0x68b850],
+        trunk: [0x8a7860, 0x5a4a38],
+      };
+    case Season.Fall:
+      return {
+        canopy: [0x8a3818, 0xa04820, 0xb86028, 0xcc7830, 0xe09038],
+        trunk: [0x8a7860, 0x5a4a38],
+        apple: 0xcc2222,
+      };
+    case Season.Winter:
+      return {
+        canopy: [0x2a2018, 0x3a2c20, 0x483828, 0x584830, 0x685838],
+        trunk: [0x3a2c20, 0x281c14],
+      };
+  }
+}
+
+function _darkenPixel(abgr: number, factor: number): number {
+  const r = Math.floor((abgr & 0xff) * factor);
+  const g = Math.floor(((abgr >> 8) & 0xff) * factor);
+  const b = Math.floor(((abgr >> 16) & 0xff) * factor);
+  return (255 << 24) | (b << 16) | (g << 8) | r;
+}
+
 // ── RegionMeta: axis info per improvement region ──────────────────────────────
 interface RegionMeta {
   minX: number; maxX: number; minY: number; maxY: number;
@@ -305,7 +425,7 @@ export class FarmRenderer {
           break;
         }
         case 'orchard':
-          pixels[i] = this._orchardPixel(px, py, m, season, noise);
+          pixels[i] = this._orchardGround(px, py, season, noise);
           break;
       }
     }
@@ -483,107 +603,6 @@ export class FarmRenderer {
     return applyBrightness(base, 1.0);
   }
 
-  // ── Orchard pixel — cute rows of apple trees with seasonal graphics ────────
-  private _orchardPixel(
-    px: number, py: number, m: RegionMeta, season: Season,
-    noise: (x: number, y: number) => number,
-  ): number {
-    // Project onto region axes to create aligned grid
-    const along = px * m.longX + py * m.longY;
-    const perp = px * m.perpX + py * m.perpY;
-
-    // Grid spacing between trees
-    const spacing = 7;
-    const cellAlong = Math.round(along / spacing) * spacing;
-    const cellPerp = Math.round(perp / spacing) * spacing;
-
-    // Offset from nearest tree center
-    const dx = along - cellAlong;
-    const dy = perp - cellPerp;
-
-    // Per-tree noise for slight size/shape variation
-    const treeNoise = noise(cellAlong * 0.31, cellPerp * 0.31);
-    const canopyRadius = 2.3 + treeNoise * 0.4;
-
-    // Trunk: 1px wide, extends below canopy center
-    const isTrunk = Math.abs(dx) < 0.7 && dy >= 0.5 && dy < 2.8;
-
-    // Canopy: circle offset upward from grid center
-    const canopyDx = dx;
-    const canopyDy = dy + 0.8;  // canopy centered slightly above grid point
-    const canopyDist = Math.sqrt(canopyDx * canopyDx + canopyDy * canopyDy);
-    const isCanopy = canopyDist < canopyRadius;
-
-    // Shade variation within canopy
-    const shadeN = noise(px * 0.6 + 33, py * 0.6 + 33);
-
-    // ── Ground (between trees) ──
-    if (!isCanopy && !isTrunk) {
-      return this._orchardGround(px, py, season, noise);
-    }
-
-    // ── Trunk ──
-    if (isTrunk && !isCanopy) {
-      if (season === Season.Winter) {
-        return applyBrightness(shadeN > 0 ? 0x4a3520 : 0x3c2a18, 1.0);
-      }
-      return applyBrightness(shadeN > 0 ? 0x5a3c20 : 0x4a3018, 1.0);
-    }
-
-    // ── Canopy — seasonal ──
-
-    // Winter: bare branches — sparse brown twigs
-    if (season === Season.Winter) {
-      // Only show ~40% of canopy pixels as branches, rest is sky/ground
-      const branchN = noise(px * 0.8 + 77, py * 0.8 + 77);
-      if (branchN > 0.1 || canopyDist > canopyRadius * 0.6) {
-        // Gaps in bare branches — show ground underneath
-        return this._orchardGround(px, py, season, noise);
-      }
-      return applyBrightness(shadeN > 0 ? 0x5a3c20 : 0x4a3018, 1.0);
-    }
-
-    // Spring: pink/white blossoms on light green
-    if (season === Season.Spring) {
-      const blossomN = noise(px * 1.2 + 11, py * 1.2 + 11);
-      // ~35% blossom pixels
-      if (blossomN > 0.25) {
-        const pinkN = noise(px * 1.8 + 55, py * 1.8 + 55);
-        if (pinkN > 0.3) {
-          return applyBrightness(0xf0c0d0, 1.0);   // light pink
-        }
-        return applyBrightness(0xe8d8e0, 1.0);     // white-pink
-      }
-      // Green leaves behind blossoms
-      return applyBrightness(shadeN > 0.1 ? 0x5ca830 : 0x489020, 1.0);
-    }
-
-    // Summer: lush dark green canopy
-    if (season === Season.Summer) {
-      // Occasional darker shadow patches for depth
-      if (shadeN < -0.3 && canopyDist < canopyRadius * 0.5) {
-        return applyBrightness(0x2a6018, 1.0);     // deep shadow
-      }
-      return applyBrightness(shadeN > 0.1 ? 0x48902a : 0x3a7820, 1.0);
-    }
-
-    // Fall: warm orange/red foliage + red apple dots
-    // Apple: small bright red dots scattered in canopy
-    const appleN = noise(px * 2.2 + 44, py * 2.2 + 44);
-    if (appleN > 0.65) {
-      return applyBrightness(0xcc2222, 1.0);       // bright red apple
-    }
-    // Fall foliage
-    const leafTone = noise(px * 0.9 + 22, py * 0.9 + 22);
-    if (leafTone > 0.3) {
-      return applyBrightness(0xc87828, 1.0);       // orange
-    }
-    if (leafTone > -0.1) {
-      return applyBrightness(0xb06020, 1.0);       // burnt orange
-    }
-    return applyBrightness(0x8a4818, 1.0);         // dark amber
-  }
-
   // ── Orchard ground — grassy with seasonal variation ─────────────────────────
   private _orchardGround(
     px: number, py: number, season: Season,
@@ -592,17 +611,257 @@ export class FarmRenderer {
     const n = noise(px * 0.15, py * 0.15);
     switch (season) {
       case Season.Winter: {
-        // Patchy snow on brown ground
         const snowN = noise(px * 0.08, py * 0.08);
         if (snowN > 0.2) return applyBrightness(snowN > 0.5 ? 0xdce4ec : 0xc4d0dc, 0.95);
         return applyBrightness(n > 0 ? 0x685040 : 0x584030, 1.0);
       }
       case Season.Spring:
-        return applyBrightness(n > 0 ? 0x5c9838 : 0x4a8828, 1.0);   // bright spring grass
+        return applyBrightness(n > 0 ? 0x5c9838 : 0x4a8828, 1.0);
       case Season.Summer:
-        return applyBrightness(n > 0 ? 0x4a8828 : 0x3c7820, 1.0);   // lush green grass
+        return applyBrightness(n > 0 ? 0x4a8828 : 0x3c7820, 1.0);
       case Season.Fall:
-        return applyBrightness(n > 0 ? 0x6a7828 : 0x586828, 1.0);   // yellowing grass
+        return applyBrightness(n > 0 ? 0x6a7828 : 0x586828, 1.0);
+    }
+  }
+
+  // ── Orchard tree stamping — sprite-based, matching in-game trees at 75% ────
+
+  /**
+   * After the main pixel pass paints orchard ground, stamp tree sprites
+   * in neat rows within each orchard region.
+   */
+  renderOrchardTrees(
+    pixels: Uint32Array,
+    N: number,
+    improvements: Map<number, AgImprovementType>,
+    regionGrid: Uint16Array,
+    seed: number,
+    season: Season,
+  ): void {
+    const regionIds: number[] = [];
+    for (const [r, type] of improvements) {
+      if (type === 'orchard') regionIds.push(r);
+    }
+    if (regionIds.length === 0) return;
+
+    // Compute bounding box + PCA for each orchard region
+    const stats = new Map<number, {
+      sx: number; sy: number; sxx: number; syy: number; sxy: number; n: number;
+      minX: number; maxX: number; minY: number; maxY: number;
+      pixels: Set<number>;
+    }>();
+    for (const r of regionIds) {
+      stats.set(r, {
+        sx: 0, sy: 0, sxx: 0, syy: 0, sxy: 0, n: 0,
+        minX: N, maxX: 0, minY: N, maxY: 0,
+        pixels: new Set(),
+      });
+    }
+    for (let i = 0; i < N * N; i++) {
+      const s = stats.get(regionGrid[i]);
+      if (!s) continue;
+      const px = i % N;
+      const py = (i - px) / N;
+      s.sx += px; s.sy += py;
+      s.sxx += px * px; s.syy += py * py; s.sxy += px * py;
+      s.n++;
+      if (px < s.minX) s.minX = px;
+      if (px > s.maxX) s.maxX = px;
+      if (py < s.minY) s.minY = py;
+      if (py > s.maxY) s.maxY = py;
+      s.pixels.add(i);
+    }
+
+    // Stamp trees in each orchard region
+    for (const [r, s] of stats) {
+      if (s.n === 0) continue;
+      const cx = s.sx / s.n;
+      const cy = s.sy / s.n;
+      const cxx = s.sxx / s.n - cx * cx;
+      const cyy = s.syy / s.n - cy * cy;
+      const cxy = s.sxy / s.n - cx * cy;
+
+      let lx: number, ly: number;
+      if (Math.abs(cxy) > 1e-6) {
+        const diff = cxx - cyy;
+        const disc = Math.sqrt(diff * diff + 4 * cxy * cxy);
+        const lambda = ((cxx + cyy) + disc) / 2;
+        lx = lambda - cyy; ly = cxy;
+      } else if (cxx >= cyy) {
+        lx = 1; ly = 0;
+      } else {
+        lx = 0; ly = 1;
+      }
+      const len = Math.sqrt(lx * lx + ly * ly) || 1;
+      lx /= len; ly /= len;
+      const perpX = -ly, perpY = lx;
+
+      // Place trees in a grid aligned to PCA axes
+      const spacing = 8;
+      const rng = mulberry32(seed ^ (r * 0xc3a5b7));
+
+      // Find range along each axis from region center
+      const W = s.maxX - s.minX;
+      const H = s.maxY - s.minY;
+      const radius = Math.max(W, H) / 2 + spacing;
+
+      // Shadow pass first, then sprite pass (painter's algorithm)
+      interface OrchardTree { tx: number; ty: number; templateIdx: number; flipped: boolean }
+      const trees: OrchardTree[] = [];
+
+      for (let ai = -Math.ceil(radius / spacing); ai <= Math.ceil(radius / spacing); ai++) {
+        for (let pi = -Math.ceil(radius / spacing); pi <= Math.ceil(radius / spacing); pi++) {
+          const tx = Math.round(cx + ai * spacing * lx + pi * spacing * perpX);
+          const ty = Math.round(cy + ai * spacing * ly + pi * spacing * perpY);
+
+          // Tree trunk base must be inside the orchard region
+          if (tx < 0 || tx >= N || ty < 0 || ty >= N) continue;
+          if (!s.pixels.has(ty * N + tx)) continue;
+
+          // Small margin from boundary: check 2px around trunk base
+          let tooClose = false;
+          for (let dy = -2; dy <= 2 && !tooClose; dy++) {
+            for (let dx = -2; dx <= 2 && !tooClose; dx++) {
+              const nx = tx + dx, ny = ty + dy;
+              if (nx < 0 || nx >= N || ny < 0 || ny >= N) { tooClose = true; break; }
+              if (!s.pixels.has(ny * N + nx)) tooClose = true;
+            }
+          }
+          if (tooClose) continue;
+
+          trees.push({
+            tx, ty,
+            templateIdx: Math.floor(rng() * ORCHARD_TEMPLATES.length),
+            flipped: rng() > 0.5,
+          });
+        }
+      }
+
+      // Sort by Y for proper overlap (back-to-front)
+      trees.sort((a, b) => a.ty - b.ty);
+
+      const palette = getOrchardPalette(season, seed);
+      const bareTemplates = season === Season.Winter;
+
+      // Shadow pass
+      if (!bareTemplates) {
+        for (const tree of trees) {
+          const tmpl = ORCHARD_TEMPLATES[tree.templateIdx];
+          const sw = Math.ceil(tmpl.w * 0.7);
+          const sh = Math.max(1, Math.ceil(tmpl.h * 0.25));
+          const sx = tree.tx + 1 - Math.floor(sw / 2);
+          const sy = tree.ty;
+          for (let dy = 0; dy < sh; dy++) {
+            for (let dx = 0; dx < sw; dx++) {
+              const px = sx + dx;
+              const py = sy + dy;
+              if (px < 0 || px >= N || py < 0 || py >= N) continue;
+              const ex = (dx - sw / 2) / (sw / 2);
+              const ey = (dy - sh / 2) / (sh / 2);
+              if (ex * ex + ey * ey > 1.0) continue;
+              const idx = py * N + px;
+              pixels[idx] = _darkenPixel(pixels[idx], 0.55);
+            }
+          }
+        }
+      }
+
+      // Sprite pass
+      for (const tree of trees) {
+        const tmpl = bareTemplates
+          ? ORCHARD_BARE_TEMPLATES[tree.templateIdx % ORCHARD_BARE_TEMPLATES.length]
+          : ORCHARD_TEMPLATES[tree.templateIdx];
+
+        this._stampOrchardTree(pixels, N, tree.tx, tree.ty, tmpl, palette, tree.flipped, season, seed);
+      }
+    }
+  }
+
+  private _stampOrchardTree(
+    pixels: Uint32Array, N: number,
+    tx: number, ty: number,
+    tmpl: { w: number; h: number; data: number[] },
+    palette: OrchardPalette,
+    flipped: boolean,
+    season: Season,
+    seed: number,
+  ): void {
+    const { w, h, data } = tmpl;
+    const startX = tx - Math.floor(w / 2);
+    const startY = ty - h + 1;
+
+    // Canopy bounding box for lighting
+    let cMinX = w, cMaxX = 0, cMinY = h, cMaxY = 0;
+    for (let sy = 0; sy < h; sy++) {
+      for (let sx = 0; sx < w; sx++) {
+        if (data[sy * w + sx] === 2) {
+          cMinX = Math.min(cMinX, sx); cMaxX = Math.max(cMaxX, sx);
+          cMinY = Math.min(cMinY, sy); cMaxY = Math.max(cMaxY, sy);
+        }
+      }
+    }
+    const canopyCX = (cMinX + cMaxX) / 2;
+    const canopyCY = (cMinY + cMaxY) / 2;
+    const canopyRadX = Math.max(1, (cMaxX - cMinX) / 2);
+    const canopyRadY = Math.max(1, (cMaxY - cMinY) / 2);
+
+    for (let sy = 0; sy < h; sy++) {
+      for (let sx = 0; sx < w; sx++) {
+        const srcX = flipped ? (w - 1 - sx) : sx;
+        const cell = data[sy * w + srcX];
+        if (cell === 0) continue;
+
+        const px = startX + sx;
+        const py = startY + sy;
+        if (px < 0 || px >= N || py < 0 || py >= N) continue;
+
+        let color: number;
+        if (cell === 1) {
+          // Trunk: left lighter, right darker
+          const trunkMid = Math.floor(w / 2);
+          const localX = flipped ? (w - 1 - sx) : sx;
+          color = localX <= trunkMid ? palette.trunk[0] : palette.trunk[1];
+        } else {
+          // Canopy: 5-shade directional lighting
+          const relX = (srcX - canopyCX) / canopyRadX;
+          const relY = (sy - canopyCY) / canopyRadY;
+          const lightDot = relX * ORCHARD_LIGHT_X + relY * ORCHARD_LIGHT_Y;
+          let shadeIdx = Math.max(0, Math.min(4, Math.floor((lightDot + 1) / 2 * 4.99)));
+
+          // Fall: scatter red apple pixels over canopy highlights
+          if (season === Season.Fall && shadeIdx >= 2) {
+            const appleHash = mulberry32((px * 7919 + py * 104729) ^ seed ^ 0xa991e)();
+            if (appleHash < 0.18) {
+              color = palette.apple!;
+              const r = (color >> 16) & 0xff;
+              const g = (color >> 8) & 0xff;
+              const b = color & 0xff;
+              pixels[py * N + px] = packABGR(r, g, b);
+              continue;
+            }
+          }
+
+          // Spring: scatter blossom pixels
+          if (season === Season.Spring && shadeIdx >= 3) {
+            const blossomHash = mulberry32((px * 7919 + py * 104729) ^ seed ^ 0xb10550)();
+            if (blossomHash < 0.30) {
+              color = blossomHash < 0.15 ? 0xf0c0d0 : 0xe8d8e0;
+              const r = (color >> 16) & 0xff;
+              const g = (color >> 8) & 0xff;
+              const b = color & 0xff;
+              pixels[py * N + px] = packABGR(r, g, b);
+              continue;
+            }
+          }
+
+          color = palette.canopy[shadeIdx];
+        }
+
+        const r = (color >> 16) & 0xff;
+        const g = (color >> 8) & 0xff;
+        const b = color & 0xff;
+        pixels[py * N + px] = packABGR(r, g, b);
+      }
     }
   }
 

@@ -1,6 +1,6 @@
 /**
- * Agricultural improvements — grain fields, gardens, cow pastures.
- * One of each is assigned deterministically per duchy at game start.
+ * Agricultural improvements — grain fields, gardens, cow pastures, orchards.
+ * Assigned deterministically per duchy at game start.
  */
 
 import { TopographyGenerator, mulberry32 } from '../generators/TopographyGenerator';
@@ -12,13 +12,14 @@ import { RIVER_THRESHOLD } from '../generators/utils';
 export type AgImprovementType = 'grain' | 'garden' | 'pasture' | 'orchard';
 
 /**
- * Assign 3 grain fields, 2 gardens, and 2 pastures per duchy.
+ * Assign 3 grain fields, 2 gardens, 2 pastures, and 2 orchards per duchy.
  * Eligible: lowland, no river, mid elevation, not capital region, not on a road.
  * Returns a Map from regionIndex → improvement type.
  */
-const GRAIN_COUNT  = 3;
-const GARDEN_COUNT = 2;
+const GRAIN_COUNT   = 3;
+const GARDEN_COUNT  = 2;
 const PASTURE_COUNT = 2;
+const ORCHARD_COUNT = 2;
 
 export function assignAgImprovements(
   topo: TopographyGenerator,
@@ -59,11 +60,12 @@ export function assignAgImprovements(
       [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
     }
 
-    // Assign fixed counts: 3 grain, 2 garden, 2 pasture
+    // Assign fixed counts: 3 grain, 2 garden, 2 pasture, 2 orchard
     const types: AgImprovementType[] = [
       ...Array(GRAIN_COUNT).fill('grain'),
       ...Array(GARDEN_COUNT).fill('garden'),
       ...Array(PASTURE_COUNT).fill('pasture'),
+      ...Array(ORCHARD_COUNT).fill('orchard'),
     ];
     for (let t = 0; t < types.length && t < shuffled.length; t++) {
       result.set(shuffled[t], types[t]);

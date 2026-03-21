@@ -168,6 +168,7 @@ export function RegionPanel() {
         grain: ['🌾', 'Grain Field'],
         garden: ['🌿', 'Garden'],
         pasture: ['🐄', 'Pasture'],
+        orchard: ['🍎', 'Orchard'],
       };
       const [icon, label] = agLabels[agType] ?? ['🏗️', agType];
       buildingIcon = icon;

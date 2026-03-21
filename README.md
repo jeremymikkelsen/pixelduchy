@@ -72,6 +72,22 @@ Seed
 | rock | 0.70 – 0.82 | Rocky terrain |
 | cliff | >= 0.82 | Mountain peaks |
 
+## House Architectural Styles
+
+Each of the 9 houses has a unique visual identity — distinct manor, cottage, and production hut sprites with custom color palettes, crop types, and cattle breeds.
+
+| House | Culture | Roof | Walls | Unique Feature | Crops | Cattle |
+|-------|---------|------|-------|----------------|-------|--------|
+| Aldren | Anglo-Saxon | Golden thatch | Dark oak timber | Steep A-frame longhouse | Wheat | Brown cattle |
+| Mira | Venetian | Terracotta tile | White plaster | Two-story palazzo, arched windows | Grapevine | Spotted white cattle |
+| Sera | Burgundian | Purple-grey slate | Cream stone | Corner turret with finial | Herbs | White cattle |
+| Dorn | Norse | Green sod/turf | Red-stained pine | Wide longhouse, dual chimneys | Root vegetables | Shaggy highland cattle |
+| Crell | Byzantine | Blue ceramic tile | Dark stone/brick | Watchtower extension | Barley | Grey cattle |
+| Vael | Celtic/Druidic | Living moss-green | Tan wattle-daub | Rounded organic silhouette | Mixed gardens | Red cattle |
+| Orvyn | Hanseatic | Dark charcoal slate | White plaster + dark beams | Half-timber Fachwerk pattern | Rye | Holstein cattle |
+| Varek | Roman | Crimson tile | Grey stone | Crenellated battlements | Wheat | War horses |
+| Brynn | Scottish Highland | Weathered slate | Rough dry-stone | Conical broch tower | Oats | Highland cattle |
+
 ## Key Technical Details
 
 - **Resolution**: 1024x1024 pixels rasterized, displayed at 2048x2048 world units with `pixelArt: true`

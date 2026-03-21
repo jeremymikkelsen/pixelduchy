@@ -8,7 +8,9 @@ import {
   formatCost,
   formatYields,
   type BuildingDef,
+  type BuildingType,
 } from '../../state/Building';
+
 /** Check if a region is on a river path */
 function regionHasRiver(regionIdx: number, hydro: { rivers: number[][] }): boolean {
   for (const path of hydro.rivers) {
@@ -19,7 +21,6 @@ function regionHasRiver(regionIdx: number, hydro: { rivers: number[][] }): boole
 
 /** Check if a region is forested (same logic as DuchyGenerator) */
 function regionHasForest(
-  regionIdx: number,
   terrainType: string,
   moisture: number,
 ): boolean {
@@ -54,7 +55,12 @@ const STATUS_TEXT_COLORS: Record<BuildStatus, string> = {
   unavailable: '#777',
 };
 
-function BuildOption({ def, status }: { def: BuildingDef; status: BuildStatus }) {
+function BuildOption({ def, status, onClick }: {
+  def: BuildingDef;
+  status: BuildStatus;
+  onClick: () => void;
+}) {
+  const clickable = status === 'available';
   return (
     <div
       className="rp-build-option"
@@ -62,7 +68,9 @@ function BuildOption({ def, status }: { def: BuildingDef; status: BuildStatus })
         background: STATUS_COLORS[status],
         color: STATUS_TEXT_COLORS[status],
         opacity: status === 'unavailable' ? 0.5 : 1,
+        cursor: clickable ? 'pointer' : 'default',
       }}
+      onClick={clickable ? onClick : undefined}
     >
       <span className="rp-build-icon">{def.icon}</span>
       <div className="rp-build-info">
@@ -79,7 +87,7 @@ function BuildOption({ def, status }: { def: BuildingDef; status: BuildStatus })
 export function RegionPanel() {
   const selectedRegion = useUIStore(s => s.selectedRegion);
   const setSelectedRegion = useUIStore(s => s.setSelectedRegion);
-  const { gameState, playerDuchy, playerEconomy } = useGameStore();
+  const { gameState, playerDuchy, playerEconomy, placeBuilding } = useGameStore();
 
   if (selectedRegion === null || selectedRegion < 0 || !gameState) return null;
 
@@ -98,12 +106,22 @@ export function RegionPanel() {
   let buildingName: string | null = null;
   let buildingIcon: string | null = null;
 
+  // Player-placed buildings
+  const placedBuilding = gameState.buildings.find(b => b.region === selectedRegion);
+  if (placedBuilding) {
+    const def = BUILDING_DEFS[placedBuilding.type];
+    buildingIcon = def.icon;
+    buildingName = def.label;
+  }
+
   // Woodcutters / Sawmills
-  for (const wc of gameState.woodcutters.values()) {
-    if (wc.regionIndex === selectedRegion) {
-      buildingIcon = wc.variant === 'sawmill' ? '🪚' : '🪓';
-      buildingName = wc.variant === 'sawmill' ? 'Sawmill' : 'Woodcutter';
-      break;
+  if (!buildingName) {
+    for (const wc of gameState.woodcutters.values()) {
+      if (wc.regionIndex === selectedRegion) {
+        buildingIcon = wc.variant === 'sawmill' ? '🪚' : '🪓';
+        buildingName = wc.variant === 'sawmill' ? 'Sawmill' : 'Woodcutter';
+        break;
+      }
     }
   }
   // Fishing camps
@@ -153,7 +171,7 @@ export function RegionPanel() {
 
   // Per-region river/forest for build eligibility
   const hasRiver = regionHasRiver(selectedRegion, gameState.hydro);
-  const hasForest = regionHasForest(selectedRegion, terrain, moisture);
+  const hasForest = regionHasForest(terrain, moisture);
 
   // Build menu: only show for player regions with no building
   const showBuildMenu = isPlayerRegion && !buildingName && playerEconomy;
@@ -170,8 +188,17 @@ export function RegionPanel() {
         .sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status])
     : [];
 
+  const handleBuild = (type: BuildingType) => {
+    placeBuilding(selectedRegion, type, hasRiver, hasForest);
+  };
+
   return (
-    <div className="panel region-panel">
+    <div
+      className="panel region-panel"
+      onPointerDown={e => e.stopPropagation()}
+      onPointerUp={e => e.stopPropagation()}
+      onClick={e => e.stopPropagation()}
+    >
       <button className="panel-close" onClick={() => setSelectedRegion(null)}>✕</button>
 
       <h3>Region {selectedRegion}</h3>
@@ -233,7 +260,12 @@ export function RegionPanel() {
           <div className="rp-build-header">Available Buildings</div>
           <div className="rp-build-list">
             {buildOptions.map(({ def, status }) => (
-              <BuildOption key={def.type} def={def} status={status} />
+              <BuildOption
+                key={def.type}
+                def={def}
+                status={status}
+                onClick={() => handleBuild(def.type)}
+              />
             ))}
           </div>
         </div>

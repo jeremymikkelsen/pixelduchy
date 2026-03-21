@@ -5,11 +5,13 @@
 
 import { create } from 'zustand';
 import type { GameState } from '../state/GameState';
+import { placeBuilding as placeBuildingInState } from '../state/GameState';
 import type { Duchy, HouseData } from '../state/Duchy';
 import type { Season } from '../state/Season';
 import type { KingData } from '../state/King';
 import type { DuchyEconomy, RationLevel, DevelopmentMode, ResourceType, LaborAssignment } from '../state/Economy';
 import { saveGame as persistSave, loadGame as loadSave, hasSavedGame, deleteSave, type SaveData } from '../state/SaveLoad';
+import type { BuildingType } from '../state/Building';
 
 export interface GameStoreState {
   // Game session state (null = not in game)
@@ -53,6 +55,9 @@ export interface GameStoreState {
   setTaxRate: (rate: number) => void;
   setLaborAllocation: (role: keyof Omit<LaborAssignment, 'unemployed'>, value: number) => void;
   setFoodEatOrder: (order: ResourceType[]) => void;
+
+  // Building placement
+  placeBuilding: (region: number, buildingType: BuildingType, hasRiver: boolean, hasForest: boolean) => boolean;
 }
 
 export const useGameStore = create<GameStoreState>((set, get) => ({
@@ -134,6 +139,8 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       gameState.removedTrees ? Array.from(gameState.removedTrees) : [],
       mineOre,
       smelterIngots,
+      gameState.buildings,
+      gameState._nextBuildingId,
     );
     set({ hasSave: true });
   },
@@ -199,5 +206,16 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
     if (!gameState) return;
     gameState.economies[gameState.playerDuchy].foodEatOrder = order;
     set({ playerEconomy: { ...gameState.economies[gameState.playerDuchy] } });
+  },
+
+  placeBuilding: (region, buildingType, hasRiver, hasForest) => {
+    const { gameState } = get();
+    if (!gameState) return false;
+    const ok = placeBuildingInState(gameState, gameState.playerDuchy, region, buildingType, hasRiver, hasForest);
+    if (ok) {
+      // Trigger React re-render with updated economy
+      set({ playerEconomy: { ...gameState.economies[gameState.playerDuchy] } });
+    }
+    return ok;
   },
 }));

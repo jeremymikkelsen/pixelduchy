@@ -8,6 +8,7 @@
 import type { DuchyEconomy } from './Economy';
 import { FOOD_KEYS } from './Economy';
 import type { Season } from './Season';
+import type { BuildingInstance } from './Building';
 
 // ─── Save data format ───────────────────────────────────────────────────────
 
@@ -30,6 +31,9 @@ export interface SaveData {
   // Mine/smelter mutable state
   mineOre?: Record<string, number>;           // duchyIndex → oreCount
   smelterIngots?: Record<string, number>;     // duchyIndex → ingotCount
+  // Player-placed buildings
+  buildings?: BuildingInstance[];
+  _nextBuildingId?: number;
 }
 
 // ─── Save ───────────────────────────────────────────────────────────────────
@@ -46,6 +50,8 @@ export function saveGame(
   removedTrees?: number[],
   mineOre?: Record<string, number>,
   smelterIngots?: Record<string, number>,
+  buildings?: BuildingInstance[],
+  _nextBuildingId?: number,
 ): void {
   const data: SaveData = {
     version: SAVE_VERSION,
@@ -61,6 +67,8 @@ export function saveGame(
     removedTrees,
     mineOre,
     smelterIngots,
+    buildings: buildings ? structuredClone(buildings) : undefined,
+    _nextBuildingId,
   };
 
   try {

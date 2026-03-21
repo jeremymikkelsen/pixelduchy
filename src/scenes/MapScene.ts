@@ -278,8 +278,13 @@ export class MapScene extends Phaser.Scene {
     // Click to show region info
     this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
       // Ignore clicks that land on React UI elements above the canvas
-      const el = document.elementFromPoint(pointer.event.clientX, pointer.event.clientY);
-      if (el && el !== this.game.canvas) return;
+      const evt = pointer.event;
+      const cx = 'clientX' in evt ? evt.clientX : (evt as TouchEvent).changedTouches?.[0]?.clientX;
+      const cy = 'clientY' in evt ? evt.clientY : (evt as TouchEvent).changedTouches?.[0]?.clientY;
+      if (cx != null && cy != null) {
+        const el = document.elementFromPoint(cx, cy);
+        if (el && el !== this.game.canvas) return;
+      }
 
       // Only fire region click if the pointer didn't drag significantly
       const dx = Math.abs(pointer.x - pointer.downX);

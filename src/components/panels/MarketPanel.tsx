@@ -17,14 +17,13 @@ const TRADEABLE: { key: ResourceType; label: string; icon: string }[] = [
   { key: 'smoked_meat', label: 'Smoked Meat', icon: '🥩' },
   { key: 'pie',         label: 'Pie',         icon: '🥧' },
   { key: 'deer',        label: 'Deer',        icon: '🦌' },
-  { key: 'spice',       label: 'Spice',       icon: '🌶️' },
 ];
 
 // Simple static prices — will be replaced by dynamic market engine later
 const BASE_PRICES: Partial<Record<ResourceType, number>> = {
   grain: 2, cattle: 4, fish: 3, apples: 2, timber: 3, ore: 5,
   stone: 4, iron: 8, cloth: 6, bread: 3, cheese: 5, smoked_meat: 6,
-  pie: 7, deer: 4, spice: 10,
+  pie: 7, deer: 4,
 };
 
 export function MarketPanel() {

@@ -6,7 +6,7 @@
 // ─── Resource types ──────────────────────────────────────────────────────────
 
 export type ResourceType =
-  | 'timber' | 'ore' | 'stone' | 'iron' | 'cloth' | 'spice' | 'gold'
+  | 'timber' | 'ore' | 'stone' | 'iron' | 'cloth' | 'gold'
   | 'grain' | 'cattle' | 'fish' | 'deer' | 'apples'
   | 'bread' | 'cheese' | 'smoked_meat' | 'pie';
 
@@ -15,7 +15,7 @@ export type DevelopmentMode = 'command' | 'incentivize' | 'laissez_faire';
 
 export interface Resources {
   timber: number; ore: number; stone: number; iron: number;
-  cloth: number; spice: number; gold: number;
+  cloth: number; gold: number;
   grain: number; cattle: number; fish: number; deer: number; apples: number;
   bread: number; cheese: number; smoked_meat: number; pie: number;
 }
@@ -75,7 +75,7 @@ const RESOURCE_KEYS: ResourceType[] = ['timber', 'ore', 'stone', 'iron', 'cloth'
 
 export function emptyResources(): Resources {
   return {
-    timber: 0, ore: 0, stone: 0, iron: 0, cloth: 0, spice: 0, gold: 0,
+    timber: 0, ore: 0, stone: 0, iron: 0, cloth: 0, gold: 0,
     grain: 0, cattle: 0, fish: 0, deer: 0, apples: 0,
     bread: 0, cheese: 0, smoked_meat: 0, pie: 0,
   };
@@ -84,7 +84,7 @@ export function emptyResources(): Resources {
 export function starterResources(): Resources {
   return {
     grain: 20, timber: 15, ore: 8, stone: 0, iron: 0,
-    cloth: 5, fish: 5, spice: 0, gold: 10,
+    cloth: 5, fish: 5, gold: 10,
     cattle: 0, deer: 0, apples: 0,
     bread: 0, cheese: 0, smoked_meat: 0, pie: 0,
   };

@@ -11,6 +11,7 @@
 
 import { packABGR } from './TerrainPalettes';
 import { Season } from '../state/Season';
+import { getHousePalette } from './HouseStyles';
 import type { FishingCampState } from '../state/Building';
 
 // ── Seasonal dirt palette (matches FarmRenderer field-dirt look) ─────────────
@@ -150,7 +151,7 @@ export class FishingCampRenderer {
     regionGrid: Uint16Array | null,
   ): { campMask: Uint8Array; renderData: FishingCampRenderData[] } {
     const NN = resolution;
-    const palette = getPalette(season);
+    const basePalette = getPalette(season);
     const mask = new Uint8Array(NN * NN);
     const renderData: FishingCampRenderData[] = [];
 
@@ -170,6 +171,24 @@ export class FishingCampRenderer {
 
     for (const [, camp] of fishingCamps) {
       const { hutPx, hutPy, dockPx, dockPy, waterDirX, waterDirY, variant, duchyIndex } = camp;
+
+      // Merge house-specific hut colors with production-specific colors
+      const hp = getHousePalette(duchyIndex, season);
+      const palette: FishingPalette = {
+        wall:    [hp.wall[0], hp.wall[2], hp.wall[4]],
+        roof:    [hp.roof[0], hp.roof[2], hp.roof[4]],
+        stone:   [hp.stone[0], hp.stone[2]],
+        door:    hp.door,
+        window:  hp.window,
+        chimney: [hp.chimney[0], hp.chimney[2]],
+        rack:    basePalette.rack,
+        fish:    basePalette.fish,
+        plank:   basePalette.plank,
+        boat:    basePalette.boat,
+        person:  basePalette.person,
+        leg:     basePalette.leg,
+        rod:     basePalette.rod,
+      };
 
       if (hutPx < 20 || hutPy < 20 || hutPx >= NN - 20 || hutPy >= NN - 20) continue;
 

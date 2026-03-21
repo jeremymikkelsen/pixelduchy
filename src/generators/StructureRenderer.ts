@@ -19,6 +19,10 @@ import { packABGR } from './TerrainPalettes';
 import { Season } from '../state/Season';
 import type { Duchy } from '../state/Duchy';
 import type { LoadedSprite } from './SpriteLoader';
+import {
+  pickManorTemplate, pickCottageTemplate, getHousePalette,
+  CELL_TYPES, type HousePalette, type SpriteTemplate,
+} from './HouseStyles';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -38,190 +42,17 @@ const MAX_BUILDING_ELEVATION = 0.38;
 const MIN_BUILDING_ELEVATION = 0.10;
 
 // ---------------------------------------------------------------------------
-// Pixel cell types
+// Pixel cell types (used by _stampSprite, _fillMask, _stampShadow)
 // ---------------------------------------------------------------------------
-const _ = 0;  // transparent
-const W = 1;  // wall (wood) — front face
-const R = 2;  // roof (thatch)
+const W = 1;  // wall (front face)
+const R = 2;  // roof
 const D = 3;  // door
 const S = 4;  // stone foundation
 const N = 5;  // window
-const P = 6;  // porch / wooden platform
+const P = 6;  // porch
 const K = 7;  // chimney
-const E = 8;  // east/side wall (3/4 depth)
+const E = 8;  // east/side wall
 const M = 9;  // smoke
-
-// ---------------------------------------------------------------------------
-// Sprite templates — 3/4 perspective (small cottages)
-// ---------------------------------------------------------------------------
-type SpriteTemplate = { w: number; h: number; data: number[]; anchorY: number };
-
-// Small cottage 3/4 (9×10)
-const COTTAGE_SMALL: SpriteTemplate = {
-  w: 9, h: 10, anchorY: 9, data: [
-    _, _, _, M, _, _, _, _, _,
-    _, _, _, K, M, _, _, _, _,
-    _, _, R, R, R, R, _, _, _,
-    _, R, R, R, R, R, R, _, _,
-    _, R, R, R, R, R, R, _, _,
-    _, W, W, N, W, E, E, _, _,
-    _, W, W, D, W, E, E, _, _,
-    _, S, S, S, S, S, S, _, _,
-    _, _, P, P, P, P, _, _, _,
-    _, _, _, P, P, _, _, _, _,
-  ],
-};
-
-// Medium cottage 3/4 (10×11)
-const COTTAGE_MEDIUM: SpriteTemplate = {
-  w: 10, h: 11, anchorY: 10, data: [
-    _, _, _, _, M, _, _, _, _, _,
-    _, _, _, K, M, _, _, _, _, _,
-    _, _, R, R, R, R, R, _, _, _,
-    _, R, R, R, R, R, R, R, _, _,
-    _, R, R, R, R, R, R, R, _, _,
-    _, W, W, N, W, W, E, E, _, _,
-    _, W, W, W, W, W, E, E, _, _,
-    _, W, W, D, W, W, E, E, _, _,
-    _, S, S, S, S, S, S, S, _, _,
-    _, _, P, P, P, P, P, _, _, _,
-    _, _, _, P, P, P, _, _, _, _,
-  ],
-};
-
-const COTTAGE_TEMPLATES: SpriteTemplate[] = [COTTAGE_SMALL, COTTAGE_MEDIUM];
-
-// ---------------------------------------------------------------------------
-// Manor templates — hand-crafted at 3 sizes for clean pixel art
-// ---------------------------------------------------------------------------
-
-// Small manor 3/4 (13×13) — chimney on left
-const MANOR_SMALL: SpriteTemplate = {
-  w: 13, h: 13, anchorY: 12, data: [
-    _, _, _, _, M, _, _, _, _, _, _, _, _,
-    _, _, _, K, M, _, _, _, _, _, _, _, _,
-    _, _, _, R, R, R, R, R, _, _, _, _, _,
-    _, _, R, R, R, R, R, R, R, _, _, _, _,
-    _, R, R, R, R, R, R, R, R, R, _, _, _,
-    _, R, R, R, R, R, R, R, R, R, _, _, _,
-    _, W, W, N, W, W, N, W, E, E, E, _, _,
-    _, W, W, W, W, W, W, W, E, E, E, _, _,
-    _, W, W, W, D, W, W, W, E, E, E, _, _,
-    _, S, S, S, S, S, S, S, S, S, S, _, _,
-    _, _, P, P, P, P, P, P, P, P, _, _, _,
-    _, _, _, P, P, P, P, P, P, _, _, _, _,
-    _, _, _, _, P, P, P, P, _, _, _, _, _,
-  ],
-};
-
-// Medium manor 3/4 (15×15) — chimney on right, wider front
-const MANOR_MEDIUM: SpriteTemplate = {
-  w: 15, h: 15, anchorY: 14, data: [
-    _, _, _, _, _, _, _, _, _, M, _, _, _, _, _,
-    _, _, _, _, _, _, _, _, K, M, _, _, _, _, _,
-    _, _, _, _, R, R, R, R, R, R, R, _, _, _, _,
-    _, _, _, R, R, R, R, R, R, R, R, R, _, _, _,
-    _, _, R, R, R, R, R, R, R, R, R, R, _, _, _,
-    _, R, R, R, R, R, R, R, R, R, R, R, R, _, _,
-    _, R, R, R, R, R, R, R, R, R, R, R, R, _, _,
-    _, W, W, N, W, W, N, W, W, N, E, E, E, _, _,
-    _, W, W, W, W, W, W, W, W, W, E, E, E, _, _,
-    _, W, W, W, W, D, W, W, W, W, E, E, E, _, _,
-    _, S, S, S, S, S, S, S, S, S, S, S, S, _, _,
-    _, _, P, P, P, P, P, P, P, P, P, P, _, _, _,
-    _, _, _, P, P, P, P, P, P, P, P, _, _, _, _,
-    _, _, _, _, P, P, P, P, P, P, _, _, _, _, _,
-    _, _, _, _, _, P, P, P, P, _, _, _, _, _, _,
-  ],
-};
-
-// Large manor 3/4 (18×17) — two chimneys, grand facade
-const MANOR_LARGE: SpriteTemplate = {
-  w: 18, h: 17, anchorY: 16, data: [
-    _, _, _, _, _, _, _, _, _, _, M, _, _, _, _, _, _, _,
-    _, _, _, _, _, K, R, R, R, K, M, _, _, _, _, _, _, _,
-    _, _, _, _, R, R, R, R, R, R, R, R, _, _, _, _, _, _,
-    _, _, _, R, R, R, R, R, R, R, R, R, R, _, _, _, _, _,
-    _, _, R, R, R, R, R, R, R, R, R, R, R, R, _, _, _, _,
-    _, R, R, R, R, R, R, R, R, R, R, R, R, R, R, _, _, _,
-    _, R, R, R, R, R, R, R, R, R, R, R, R, R, R, _, _, _,
-    _, W, W, N, W, W, N, W, W, N, W, W, E, E, E, E, _, _,
-    _, W, W, W, W, W, W, W, W, W, W, W, E, E, E, E, _, _,
-    _, W, W, W, W, W, W, D, W, W, W, W, E, E, E, E, _, _,
-    _, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, _, _,
-    _, _, P, P, P, P, P, P, P, P, P, P, P, P, P, _, _, _,
-    _, _, _, P, P, P, P, P, P, P, P, P, P, P, _, _, _, _,
-    _, _, _, _, P, P, P, P, P, P, P, P, P, _, _, _, _, _,
-    _, _, _, _, _, P, P, P, P, P, P, P, _, _, _, _, _, _,
-    _, _, _, _, _, _, P, P, P, P, P, _, _, _, _, _, _, _,
-    _, _, _, _, _, _, _, P, P, P, _, _, _, _, _, _, _, _,
-  ],
-};
-
-const MANOR_TEMPLATES: SpriteTemplate[] = [MANOR_SMALL, MANOR_MEDIUM, MANOR_LARGE];
-
-/** Pick a manor template based on cell size + rng for variation. */
-function pickManor(cellW: number, cellH: number, rng: () => number): SpriteTemplate {
-  const cellDim = Math.min(cellW, cellH);
-  // Pick size based on cell, with some random variation
-  let idx: number;
-  if (cellDim >= 20) {
-    idx = rng() < 0.4 ? 2 : 1;    // large or medium
-  } else if (cellDim >= 15) {
-    idx = rng() < 0.5 ? 1 : 0;    // medium or small
-  } else {
-    idx = rng() < 0.3 ? 1 : 0;    // mostly small
-  }
-  return MANOR_TEMPLATES[idx];
-}
-
-// ---------------------------------------------------------------------------
-// Color palettes
-// ---------------------------------------------------------------------------
-interface StructurePalette {
-  wall: number[];     // 5 shades
-  roof: number[];     // 5 shades
-  stone: number[];    // 5 shades
-  door: number;
-  window: number;
-  porch: number[];    // 3 shades
-  chimney: number[];  // 3 shades
-}
-
-const PALETTE_SUMMER: StructurePalette = {
-  wall:    [0x4a3520, 0x5c4430, 0x6e5340, 0x806248, 0x927150],
-  roof:    [0x8a7a40, 0x9c8c50, 0xae9e60, 0xc0ae70, 0xd0be80],
-  stone:   [0x585050, 0x686060, 0x787070, 0x888080, 0x989090],
-  door:    0x3a2810,
-  window:  0x4488bb,
-  porch:   [0x5a4830, 0x6e5c3e, 0x82704c],
-  chimney: [0x887070, 0x988080, 0xa89090],
-};
-
-const PALETTE_WINTER: StructurePalette = {
-  wall:    [0x4a3520, 0x5c4430, 0x6e5340, 0x806248, 0x927150],
-  roof:    [0xc8c8d0, 0xd4d4dc, 0xe0e0e8, 0xeaeaf0, 0xf4f4f8],
-  stone:   [0x585058, 0x686068, 0x787078, 0x888088, 0x989098],
-  door:    0x3a2810,
-  window:  0x3a78a8,
-  porch:   [0xb0b0b8, 0xc0c0c8, 0xd0d0d8],
-  chimney: [0x887070, 0x988080, 0xa89090],
-};
-
-const PALETTE_SPRING: StructurePalette = { ...PALETTE_SUMMER };
-const PALETTE_FALL: StructurePalette = {
-  ...PALETTE_SUMMER,
-  roof: [0x7a6a30, 0x8c7c40, 0x9e8e50, 0xb09e58, 0xc0ae60],
-};
-
-function getPalette(season: Season): StructurePalette {
-  switch (season) {
-    case Season.Winter: return PALETTE_WINTER;
-    case Season.Spring: return PALETTE_SPRING;
-    case Season.Fall:   return PALETTE_FALL;
-    default:            return PALETTE_SUMMER;
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Structure instance
@@ -306,9 +137,9 @@ export class StructureRenderer {
       const cellW = Math.round(maxPx - minPx);
       const cellH = Math.round(maxPy - minPy);
 
-      // Pick a manor template based on cell size with random variation
+      // Pick a house-specific manor template based on cell size with random variation
       const manorRng = mulberry32(seed ^ (cr * 0x9E3779B9));
-      const template = pickManor(cellW, cellH, manorRng);
+      const template = pickManorTemplate(di, cellW, cellH, manorRng);
 
       structures.push({
         px,
@@ -377,7 +208,8 @@ export class StructureRenderer {
       if (elev < MIN_BUILDING_ELEVATION || elev > MAX_BUILDING_ELEVATION) continue;
       if (terrain !== 'lowland' && terrain !== 'highland' && terrain !== 'coast') continue;
 
-      if (regionToDuchy[bestR] < 0) continue;
+      const cottageDuchyIdx = regionToDuchy[bestR];
+      if (cottageDuchyIdx < 0) continue;
 
       let tooCloseToCapital = false;
       for (const s of structures) {
@@ -393,15 +225,16 @@ export class StructureRenderer {
       if (moisture > 0.4) keepChance *= 1.4;
       if (rng() > keepChance) continue;
 
-      const templateIdx = rng() < 0.6 ? 0 : 1;
+      // Use house-specific cottage template
+      const cottageTemplate = pickCottageTemplate(cottageDuchyIdx, rng);
 
       structures.push({
         px,
         py,
-        template: COTTAGE_TEMPLATES[templateIdx],
+        template: cottageTemplate,
         flipped: rng() < 0.5,
         isCapital: false,
-        duchyIndex: -1,
+        duchyIndex: cottageDuchyIdx,
       });
     }
 
@@ -425,23 +258,19 @@ export class StructureRenderer {
     resolution: number,
     structures: StructureInstance[],
     season: Season = Season.Summer,
-    manorSprites?: LoadedSprite[],
+    _manorSprites?: LoadedSprite[],
   ): Uint8Array {
-    const palette = getPalette(season);
     const buildingMask = new Uint8Array(resolution * resolution);
 
     // Shadow pass — shadows don't need to be in buildingMask
     for (const s of structures) {
       this._stampShadow(pixels, resolution, s);
     }
-    // Sprite pass — track building pixels in mask
+    // Sprite pass — use house-specific palettes
     for (const s of structures) {
-      if (s.isCapital && manorSprites && manorSprites.length > 0) {
-        const sprite = manorSprites[s.duchyIndex % manorSprites.length];
-        this._stampLoadedSprite(pixels, resolution, s, sprite);
-      } else {
-        this._stampSprite(pixels, resolution, s, palette);
-      }
+      const duchyIdx = s.duchyIndex >= 0 ? s.duchyIndex : 0;
+      const palette = getHousePalette(duchyIdx, season);
+      this._stampSprite(pixels, resolution, s, palette);
       this._fillMask(buildingMask, resolution, s);
     }
 
@@ -589,7 +418,7 @@ export class StructureRenderer {
   private _stampSprite(
     pixels: Uint32Array, N: number,
     s: StructureInstance,
-    palette: StructurePalette,
+    palette: HousePalette,
   ): void {
     const { px: tx, py: ty, template, flipped } = s;
     const { w, h, data, anchorY } = template;
@@ -649,7 +478,7 @@ export class StructureRenderer {
             break;
           }
           case E: {
-            color = palette.wall[1];
+            color = palette.sideWall;
             break;
           }
           case R: {
@@ -683,6 +512,19 @@ export class StructureRenderer {
             color = palette.chimney[ci];
             break;
           }
+          // Extended house-specific cell types
+          case CELL_TYPES.BANNER:
+            color = palette.banner ?? palette.roof[2];
+            break;
+          case CELL_TYPES.BEAM:
+            color = palette.beam ?? palette.door;
+            break;
+          case CELL_TYPES.TURRET:
+            color = palette.turret ?? palette.roof[3];
+            break;
+          case CELL_TYPES.CRENELLATION:
+            color = palette.crenellation ?? palette.stone[3];
+            break;
           default:
             continue;
         }

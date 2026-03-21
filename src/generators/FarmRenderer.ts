@@ -17,6 +17,7 @@ import { TopographyGenerator, mulberry32 } from './TopographyGenerator';
 import { packABGR, applyBrightness } from './TerrainPalettes';
 import { Season } from '../state/Season';
 import type { AgImprovementType } from '../state/AgImprovements';
+import { getHouseStyle } from './HouseStyles';
 
 const GRAIN_BRIGHTNESS = 1.25;
 
@@ -67,6 +68,33 @@ const PASTURE_B = {
   [Season.Fall]:   0x627a2c,
 };
 
+// ── Crop style color palettes — per-house visual variety ──────────────────────
+// Fall: [furrow, row1a, row1b, row2a, row2b, row3a, row3b]
+const CROP_FALL_COLORS: Record<string, number[]> = {
+  wheat:    [0x8a6820, 0xb88828, 0xa07820, 0xd8a838, 0xc89830, 0xf0cc50, 0xe8c040],
+  rice:     [0x6a7828, 0x98a838, 0x889828, 0xb8c848, 0xa8b838, 0xd0e050, 0xc8d848],
+  root_veg: [0x5a4020, 0x7a5828, 0x6a4820, 0x8a6838, 0x806030, 0xa88848, 0x987840],
+  vine:     [0x584020, 0x804828, 0x703820, 0x985838, 0x885030, 0xb87048, 0xa86040],
+  herb:     [0x385020, 0x508828, 0x407020, 0x68a838, 0x589830, 0x80c048, 0x70b040],
+  oat:      [0x787040, 0xa89850, 0x988840, 0xc0b060, 0xb0a050, 0xd8c878, 0xc8b868],
+  mixed:    [0x607028, 0x889838, 0x788828, 0xa0b048, 0x90a038, 0xb8c858, 0xa8b848],
+  barley:   [0x887830, 0xb09838, 0xa08830, 0xc8b048, 0xb8a040, 0xe0c860, 0xd0b850],
+  rye:      [0x787030, 0xa09040, 0x908030, 0xb8a850, 0xa89840, 0xd0c068, 0xc0b058],
+};
+
+// Summer: [furrow, row1, row2a, row2b, row3a, row3b]
+const CROP_SUMMER_COLORS: Record<string, number[]> = {
+  wheat:    [0x2a3818, 0x3a5818, 0x5a9830, 0x4a8828, 0x88b838, 0x70a030],
+  rice:     [0x284830, 0x388838, 0x48a848, 0x389838, 0x68c858, 0x58b848],
+  root_veg: [0x2a3018, 0x3a4818, 0x507830, 0x406828, 0x689038, 0x588030],
+  vine:     [0x283818, 0x385020, 0x4a7828, 0x3a6820, 0x609838, 0x508830],
+  herb:     [0x204018, 0x306020, 0x409028, 0x308020, 0x58b038, 0x48a030],
+  oat:      [0x303818, 0x405818, 0x608830, 0x507828, 0x78a838, 0x689830],
+  mixed:    [0x284020, 0x386828, 0x489838, 0x388828, 0x60b848, 0x50a838],
+  barley:   [0x2a3818, 0x3a5818, 0x589030, 0x488028, 0x80a838, 0x709830],
+  rye:      [0x283818, 0x385018, 0x508830, 0x407828, 0x78a038, 0x689030],
+};
+
 // ── RegionMeta: axis info per improvement region ──────────────────────────────
 interface RegionMeta {
   minX: number; maxX: number; minY: number; maxY: number;
@@ -104,6 +132,7 @@ export class FarmRenderer {
     regionGrid: Uint16Array,
     seed: number,
     season: Season,
+    regionToDuchy?: Int8Array,
   ): void {
     if (improvements.size === 0) return;
 
@@ -256,9 +285,12 @@ export class FarmRenderer {
         }
       }
 
+      const duchyIdx = regionToDuchy ? regionToDuchy[r] : -1;
+      const cropStyle = duchyIdx >= 0 ? getHouseStyle(duchyIdx).cropStyle : 'wheat';
+
       switch (type) {
         case 'grain':
-          pixels[i] = this._grainPixel(px, py, m, season, noise);
+          pixels[i] = this._grainPixel(px, py, m, season, noise, cropStyle);
           break;
         case 'garden': {
           const crops = gardenCrops.get(r)!;
@@ -277,24 +309,26 @@ export class FarmRenderer {
 
   }
 
-  // ── Grain stalk pixel — seasonal patterns ───────────────────────────────────
+  // ── Grain stalk pixel — seasonal patterns, crop style varies by house ────────
   private _grainPixel(
     px: number, py: number, m: RegionMeta, season: Season,
     noise: (x: number, y: number) => number,
+    cropStyle: string = 'wheat',
   ): number {
     const perp = px * m.perpX + py * m.perpY;
-    const along = px * m.longX + py * m.longY;
+
+    // Crop style color variants for fall harvest
+    const fallColors = CROP_FALL_COLORS[cropStyle] ?? CROP_FALL_COLORS.wheat;
+    const summerColors = CROP_SUMMER_COLORS[cropStyle] ?? CROP_SUMMER_COLORS.wheat;
 
     // ── Winter: bare brown soil + snow patches + dark stubble ──
     if (season === Season.Winter) {
       const n1 = noise(px * 0.06, py * 0.06);
       const n2 = noise(px * 0.18 + 50, py * 0.18 + 50);
       if (n1 > 0.25) {
-        // Snow patch
         return applyBrightness(n1 > 0.5 ? 0xdce4ec : 0xc4d0dc, 0.95 + n2 * 0.08);
       }
       if (n2 > 0.65) {
-        // Dark stubble / cracks
         return applyBrightness(0x30201a, 1.0);
       }
       return applyBrightness(n2 > 0 ? 0x685040 : 0x584030, 1.0);
@@ -303,6 +337,17 @@ export class FarmRenderer {
     // ── Spring: brown soil with single-pixel rows of sprouts ──
     if (season === Season.Spring) {
       const gp = ((Math.floor(perp) % 4) + 4) % 4;
+      // Rice paddies have wider water-filled furrows in spring
+      if (cropStyle === 'rice') {
+        if (gp <= 1) {
+          const n = noise(px * 0.15, py * 0.15);
+          return applyBrightness(n > 0 ? 0x607888 : 0x506878, 1.0); // muddy water
+        }
+        if (gp === 2) {
+          return applyBrightness(0x60a828, GRAIN_BRIGHTNESS);
+        }
+        return applyBrightness(0x506838, 1.0);
+      }
       if (gp === 2) {
         const n = noise(px * 0.25, py * 0.25);
         return applyBrightness(n > 0 ? 0x78b830 : 0x4a8020, GRAIN_BRIGHTNESS);
@@ -314,20 +359,20 @@ export class FarmRenderer {
     // ── Summer: dense green rows, thin furrow ──
     if (season === Season.Summer) {
       const row = ((Math.floor(perp) % 4) + 4) % 4;
-      if (row === 0) return applyBrightness(0x2a3818, 1.0);
+      if (row === 0) return applyBrightness(summerColors[0], 1.0);
       const n = noise(px * 0.2, py * 0.2);
-      if (row === 1) return applyBrightness(0x3a5818, GRAIN_BRIGHTNESS);
-      if (row === 2) return applyBrightness(n > 0 ? 0x5a9830 : 0x4a8828, GRAIN_BRIGHTNESS);
-      return applyBrightness(n > 0 ? 0x88b838 : 0x70a030, GRAIN_BRIGHTNESS);
+      if (row === 1) return applyBrightness(summerColors[1], GRAIN_BRIGHTNESS);
+      if (row === 2) return applyBrightness(n > 0 ? summerColors[2] : summerColors[3], GRAIN_BRIGHTNESS);
+      return applyBrightness(n > 0 ? summerColors[4] : summerColors[5], GRAIN_BRIGHTNESS);
     }
 
-    // ── Fall: dense golden wheat rows ──
+    // ── Fall: dense harvest rows ──
     const row = ((Math.floor(perp) % 4) + 4) % 4;
-    if (row === 0) return applyBrightness(0x8a6820, 1.0);
+    if (row === 0) return applyBrightness(fallColors[0], 1.0);
     const n = noise(px * 0.2, py * 0.2);
-    if (row === 1) return applyBrightness(n > 0 ? 0xb88828 : 0xa07820, GRAIN_BRIGHTNESS);
-    if (row === 2) return applyBrightness(n > 0 ? 0xd8a838 : 0xc89830, GRAIN_BRIGHTNESS);
-    return applyBrightness(n > 0 ? 0xf0cc50 : 0xe8c040, GRAIN_BRIGHTNESS);
+    if (row === 1) return applyBrightness(n > 0 ? fallColors[1] : fallColors[2], GRAIN_BRIGHTNESS);
+    if (row === 2) return applyBrightness(n > 0 ? fallColors[3] : fallColors[4], GRAIN_BRIGHTNESS);
+    return applyBrightness(n > 0 ? fallColors[5] : fallColors[6], GRAIN_BRIGHTNESS);
   }
 
   // ── Garden patch pixel ──────────────────────────────────────────────────────

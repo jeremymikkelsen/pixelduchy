@@ -7,6 +7,7 @@
 
 import { packABGR } from './TerrainPalettes';
 import { Season } from '../state/Season';
+import { getHousePalette } from './HouseStyles';
 import type { MineState } from '../state/Building';
 
 // ── Cell types ───────────────────────────────────────────────────────────────
@@ -109,13 +110,23 @@ export class MineRenderer {
     season: Season,
   ): { mineMask: Uint8Array; mineBuildingMask: Uint8Array; renderData: MineRenderData[] } {
     const NN = resolution;
-    const palette = getPalette(season);
+    const basePalette = getPalette(season);
     const mask = new Uint8Array(NN * NN);
     const buildMask = new Uint8Array(NN * NN);
     const renderData: MineRenderData[] = [];
 
     for (const [_di, mine] of mines) {
       const { entrancePx, entrancePy, oreCount, duchyIndex, rockDirX, rockDirY } = mine;
+
+      // Merge house-specific building colors with production-specific colors
+      const hp = getHousePalette(duchyIndex, season);
+      const palette: MinePalette = {
+        stone:  [hp.stone[0], hp.stone[2], hp.stone[4]],
+        timber: [hp.wall[0], hp.wall[2]],
+        dark:   basePalette.dark,
+        ore:    basePalette.ore,
+        track:  basePalette.track,
+      };
 
       if (entrancePx < 15 || entrancePy < 15 ||
           entrancePx >= NN - 15 || entrancePy >= NN - 15) continue;

@@ -8,6 +8,7 @@
 
 import { packABGR } from './TerrainPalettes';
 import { Season } from '../state/Season';
+import { getHousePalette } from './HouseStyles';
 import type { SmelterState } from '../state/Building';
 
 // ── Cell types ───────────────────────────────────────────────────────────────
@@ -126,13 +127,27 @@ export class SmelterRenderer {
     season: Season,
   ): { smelterMask: Uint8Array; smelterBuildingMask: Uint8Array; renderData: SmelterRenderData[] } {
     const NN = resolution;
-    const palette = getPalette(season);
+    const basePalette = getPalette(season);
     const mask = new Uint8Array(NN * NN);
     const buildMask = new Uint8Array(NN * NN);
     const renderData: SmelterRenderData[] = [];
 
     for (const [_di, smelter] of smelters) {
       const { buildingPx, buildingPy, ingotCount, duchyIndex, nearRiver } = smelter;
+
+      // Merge house-specific building colors with production-specific colors
+      const hp = getHousePalette(duchyIndex, season);
+      const palette: SmelterPalette = {
+        wall:    [hp.wall[0], hp.wall[2], hp.wall[4]],
+        roof:    [hp.roof[0], hp.roof[2], hp.roof[4]],
+        stone:   [hp.stone[0], hp.stone[2]],
+        door:    hp.door,
+        window:  hp.window,
+        chimney: [hp.chimney[0], hp.chimney[1], hp.chimney[2]],
+        furnace: basePalette.furnace,
+        ingot:   basePalette.ingot,
+        slag:    basePalette.slag,
+      };
 
       if (buildingPx < 15 || buildingPy < 15 ||
           buildingPx >= NN - 15 || buildingPy >= NN - 15) continue;

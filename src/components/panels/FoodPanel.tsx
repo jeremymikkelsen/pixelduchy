@@ -5,6 +5,7 @@ import {
   computeProduction, countTerrain,
   type ResourceType, type RationLevel,
 } from '../../state/Economy';
+import { ResourceIcon } from '../ui/ResourceIcon';
 
 const FOOD_META: { key: ResourceType; label: string; icon: string }[] = [
   { key: 'grain',       label: 'Grain',       icon: '🌾' },
@@ -144,7 +145,7 @@ export function FoodPanel() {
               const empty = stock === 0 && prod === 0;
               return (
                 <tr key={key} className={empty ? 'fp-row-empty' : ''}>
-                  <td>{icon} {label}</td>
+                  <td><ResourceIcon type={key} fallback={icon} size={14} /> {label}</td>
                   <td className="fp-num">{stock > 0 ? stock : '—'}</td>
                   <td className="fp-num fp-prod">{prod > 0 ? `+${prod}` : '—'}</td>
                   <td className="fp-num fp-eat">{eats > 0 ? eats : '—'}</td>

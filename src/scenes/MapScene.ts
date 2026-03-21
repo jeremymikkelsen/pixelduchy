@@ -813,7 +813,7 @@ export class MapScene extends Phaser.Scene {
     const farmRenderer = new FarmRenderer();
     if (this._state.agImprovements && renderer.regionGrid) {
       farmRenderer.render(pixels, PIXEL_RESOLUTION, this._state.agImprovements,
-        topo, renderer.regionGrid, seed, season);
+        topo, renderer.regionGrid, seed, season, this._state.regionToDuchy);
     }
 
     // Static rivers — rendered BEFORE coastal so riverMask can suppress beach/waves at river mouths

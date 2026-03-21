@@ -9,6 +9,7 @@
 import { mulberry32 } from './TopographyGenerator';
 import { packABGR } from './TerrainPalettes';
 import { Season } from '../state/Season';
+import { getHousePalette } from './HouseStyles';
 import type { WoodcutterState } from '../state/Building';
 import type { PlacedTree } from './TreeRenderer';
 
@@ -152,7 +153,7 @@ export class WoodcutterRenderer {
     removedTrees: Set<number>,
   ): { woodcutterMask: Uint8Array; woodcutterBuildingMask: Uint8Array; renderData: WoodcutterRenderData[] } {
     const NN = resolution;
-    const palette = getPalette(season);
+    const basePalette = getPalette(season);
     const mask = new Uint8Array(NN * NN);           // wide clearing (tree avoidance)
     const buildMask = new Uint8Array(NN * NN);      // tight (actual structure pixels only)
     const renderData: WoodcutterRenderData[] = [];
@@ -160,6 +161,20 @@ export class WoodcutterRenderer {
     for (const [_di, wc] of woodcutters) {
       const { hutPx, hutPy, variant, lumberCount, duchyIndex } = wc;
       const rng = mulberry32(seed ^ (duchyIndex * 0x7e3a + 0xbeef));
+
+      // Merge house-specific hut colors with production-specific colors
+      const hp = getHousePalette(duchyIndex, season);
+      const palette: WoodcutterPalette = {
+        wall:    [hp.wall[0], hp.wall[2], hp.wall[4]],
+        roof:    [hp.roof[0], hp.roof[2], hp.roof[4]],
+        stone:   [hp.stone[0], hp.stone[2]],
+        door:    hp.door,
+        window:  hp.window,
+        chimney: [hp.chimney[0], hp.chimney[2]],
+        lumber:  basePalette.lumber,
+        wheel:   basePalette.wheel,
+        dam:     basePalette.dam,
+      };
 
       // Don't render if too close to edge
       if (hutPx < 15 || hutPy < 15 || hutPx >= NN - 15 || hutPy >= NN - 15) continue;

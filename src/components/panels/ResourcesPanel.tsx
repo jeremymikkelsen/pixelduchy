@@ -1,6 +1,7 @@
 import { useGameStore } from '../../store/gameStore';
 import { useUIStore } from '../../store/uiStore';
 import { computeProduction, countTerrain, type ResourceType, type LaborAssignment } from '../../state/Economy';
+import { ResourceIcon } from '../ui/ResourceIcon';
 
 type WorkerRole = keyof Omit<LaborAssignment, 'unemployed'>;
 const WORKER_ROLES: WorkerRole[] = ['farmers', 'lumberjacks', 'miners', 'quarrymen', 'smiths'];
@@ -64,7 +65,7 @@ export function ResourcesPanel() {
               const net = production[key] ?? 0;
               return (
                 <tr key={key}>
-                  <td>{icon} {label}</td>
+                  <td><ResourceIcon type={key} fallback={icon} size={14} /> {label}</td>
                   <td className="fp-num">{stock > 0 ? stock : '—'}</td>
                   <td className={`fp-num ${net > 0 ? 'fp-prod' : ''}`}>
                     {net > 0 ? `+${net}` : '—'}
@@ -88,7 +89,7 @@ export function ResourcesPanel() {
           return (
             <div key={role} className="labor-row">
               <div className="labor-row-header">
-                <span className="labor-role-name">{icon} {label}</span>
+                <span className="labor-role-name"><ResourceIcon type={resource} fallback={icon} size={14} /> {label}</span>
                 <div className="labor-row-meta">
                   {bonus && <span className="labor-bonus">{bonus}</span>}
                   <span className="labor-count">{assigned}</span>

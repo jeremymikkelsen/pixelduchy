@@ -2,6 +2,7 @@ import { useUIStore } from '../../store/uiStore';
 import { useGameStore } from '../../store/gameStore';
 import type { ResourceType } from '../../state/Economy';
 import { getMarketPrice, BASE_MARKET_PRICES } from '../../state/Economy';
+import { ResourceIcon } from '../ui/ResourceIcon';
 
 const TRADEABLE: { key: ResourceType; label: string; icon: string }[] = [
   { key: 'grain',       label: 'Grain',       icon: '🌾' },
@@ -83,7 +84,7 @@ export function MarketPanel() {
               const canSell = stock > 0;
               return (
                 <tr key={key}>
-                  <td>{icon} {label}</td>
+                  <td><ResourceIcon type={key} fallback={icon} size={14} /> {label}</td>
                   <td className="fp-num">{stock}</td>
                   <td className="fp-num">
                     <button

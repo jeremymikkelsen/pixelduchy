@@ -244,10 +244,53 @@ html, body, #root {
 .region-panel {
   bottom: 1rem;
   right: 1rem;
-  max-width: 280px;
+  max-width: 300px;
   max-height: calc(100vh - 80px);
   overflow-y: auto;
 }
+
+/* ─── Region panel: building display ─────────────────────────────────────────── */
+.rp-building-display {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  background: rgba(255,255,255,0.06);
+  border-radius: 6px;
+  border-left: 3px solid #c9a227;
+}
+.rp-building-icon { font-size: 1.1rem; }
+.rp-building-name { font-size: 0.85rem; color: #f5d87a; font-weight: 600; }
+
+/* ─── Region panel: build menu ───────────────────────────────────────────────── */
+.rp-build-menu { margin-top: 0.6rem; }
+.rp-build-header {
+  font-size: 0.75rem;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.35rem;
+}
+.rp-build-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.rp-build-option {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.78rem;
+  cursor: default;
+}
+.rp-build-icon { font-size: 0.9rem; flex-shrink: 0; }
+.rp-build-info { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.rp-build-name { font-weight: 600; font-size: 0.78rem; }
+.rp-build-cost { font-size: 0.68rem; opacity: 0.8; }
+.rp-build-yields { font-size: 0.68rem; opacity: 0.8; white-space: nowrap; }
 
 .panel-close {
   position: absolute;

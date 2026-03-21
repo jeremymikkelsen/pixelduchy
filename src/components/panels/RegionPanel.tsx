@@ -109,13 +109,15 @@ export function RegionPanel() {
   // Check for existing buildings/improvements on this region
   let buildingName: string | null = null;
   let buildingIcon: string | null = null;
+  let isConstructing = false;
 
   // Player-placed buildings
   const placedBuilding = gameState.buildings.find(b => b.region === selectedRegion);
   if (placedBuilding) {
     const def = BUILDING_DEFS[placedBuilding.type];
-    buildingIcon = def.icon;
-    buildingName = def.label;
+    buildingIcon = placedBuilding.constructing ? '🚧' : def.icon;
+    buildingName = placedBuilding.constructing ? `${def.label} (Under Construction)` : def.label;
+    isConstructing = placedBuilding.constructing;
   }
 
   // Woodcutters / Sawmills
@@ -234,9 +236,11 @@ export function RegionPanel() {
 
       {/* Existing building */}
       {buildingName && (
-        <div className="rp-building-display">
+        <div className="rp-building-display" style={isConstructing ? { borderLeftColor: '#b08030' } : undefined}>
           <span className="rp-building-icon">{buildingIcon}</span>
-          <span className="rp-building-name">{buildingName}</span>
+          <span className="rp-building-name" style={isConstructing ? { color: '#d4a84a' } : undefined}>
+            {buildingName}
+          </span>
         </div>
       )}
 

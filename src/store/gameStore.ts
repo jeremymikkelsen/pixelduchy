@@ -34,6 +34,7 @@ export interface GameStoreState {
   onEndTurn: (() => void) | null;
   onNewGame: (() => void) | null;
   onLoadGame: ((save: SaveData) => void) | null;
+  onMapDirty: (() => void) | null;
 
   // Actions
   setGameState: (state: GameState, regionGrid: Uint16Array | null) => void;
@@ -41,6 +42,7 @@ export interface GameStoreState {
     onEndTurn: () => void,
     onNewGame: () => void,
     onLoadGame: (save: SaveData) => void,
+    onMapDirty?: () => void,
   ) => void;
   clearGame: () => void;
 
@@ -74,6 +76,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
   onEndTurn: null,
   onNewGame: null,
   onLoadGame: null,
+  onMapDirty: null,
 
   setGameState: (gameState, regionGrid) => {
     const playerDuchy = gameState.duchies[gameState.playerDuchy] ?? null;
@@ -90,7 +93,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
     });
   },
 
-  setCallbacks: (onEndTurn, onNewGame, onLoadGame) => set({ onEndTurn, onNewGame, onLoadGame }),
+  setCallbacks: (onEndTurn, onNewGame, onLoadGame, onMapDirty) => set({ onEndTurn, onNewGame, onLoadGame, onMapDirty }),
 
   clearGame: () => set({
     gameState: null,
@@ -209,12 +212,14 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
   },
 
   placeBuilding: (region, buildingType, hasRiver, hasForest) => {
-    const { gameState } = get();
+    const { gameState, onMapDirty } = get();
     if (!gameState) return false;
     const ok = placeBuildingInState(gameState, gameState.playerDuchy, region, buildingType, hasRiver, hasForest);
     if (ok) {
       // Trigger React re-render with updated economy
       set({ playerEconomy: { ...gameState.economies[gameState.playerDuchy] } });
+      // Re-render the map to show the new building
+      if (onMapDirty) onMapDirty();
     }
     return ok;
   },

@@ -232,17 +232,18 @@ export function advanceTurn(state: GameState): void {
       }
     }
 
-    // Player-placed building yields
+    // Finish construction for buildings that were under construction last turn
     for (const b of state.buildings) {
       if (b.duchyIndex !== i) continue;
+      if (b.constructing) {
+        b.constructing = false;
+        continue; // no yields on the turn construction finishes
+      }
+      // Player-placed building yields (only when built)
       const def = BUILDING_DEFS[b.type];
       for (const y of def.yields) {
         const key = y.resource as keyof typeof state.economies[0]['resources'];
         state.economies[i].resources[key] += y.amount * b.level;
-      }
-      // Favor from buildings like church
-      if (def.favorOnBuild > 0 && b.level === 1) {
-        // favorOnBuild is a one-time bonus, already applied at placement
       }
     }
   }
@@ -286,13 +287,14 @@ export function placeBuilding(
     eco.resources[key] -= amount ?? 0;
   }
 
-  // Place building
+  // Place building (starts as under construction)
   state.buildings.push({
     id: state._nextBuildingId++,
     type: buildingType,
     region,
     level: 1,
     duchyIndex,
+    constructing: true,
   });
 
   // One-time favor bonus

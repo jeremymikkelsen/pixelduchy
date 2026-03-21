@@ -95,6 +95,7 @@ export interface BuildingInstance {
   region: number;       // Voronoi region index
   level: number;        // 1-based
   duchyIndex: number;   // which duchy owns it
+  constructing: boolean; // true while under construction (one season)
 }
 
 // ─── Fishing Camp state ─────────────────────────────────────────────────────

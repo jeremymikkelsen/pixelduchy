@@ -27,6 +27,7 @@ import { MineRenderer } from '../generators/MineRenderer';
 import { MineAnimator } from '../generators/MineAnimator';
 import { SmelterRenderer } from '../generators/SmelterRenderer';
 import { SmelterAnimator } from '../generators/SmelterAnimator';
+import { PlacedBuildingRenderer } from '../generators/PlacedBuildingRenderer';
 import { packABGR } from '../generators/TerrainPalettes';
 
 const MAP_SIZE = 3072;
@@ -151,6 +152,12 @@ export class MapScene extends Phaser.Scene {
       // onLoadGame
       (save: SaveData) => {
         this._loadFromSave(save);
+      },
+      // onMapDirty — re-render map without advancing turn (e.g. building placed)
+      () => {
+        if (!this._state) return;
+        this._renderMap();
+        this._pushStateToStore();
       },
     );
 
@@ -879,6 +886,15 @@ export class MapScene extends Phaser.Scene {
       if (smelterMask[i]) structureMask[i] = 1;
     }
 
+    // Player-placed buildings (before trees so clearing works)
+    const placedBuildingRenderer = new PlacedBuildingRenderer();
+    const { mask: placedBuildingMask, buildingMask: placedBuildingBuildingMask } = placedBuildingRenderer.render(
+      pixels, PIXEL_RESOLUTION, topo, this._state.buildings, season,
+    );
+    for (let i = 0; i < placedBuildingMask.length; i++) {
+      if (placedBuildingMask[i]) structureMask[i] = 1;
+    }
+
     // Trees: 3-step pipeline
     // 1. Compute all tree positions (no drawing yet) — needed for woodcutter targeting
     const treeRenderer = new TreeRenderer();
@@ -958,6 +974,10 @@ export class MapScene extends Phaser.Scene {
     }
     for (let bi = 0; bi < PIXEL_RESOLUTION * PIXEL_RESOLUTION; bi++) {
       if (smelterBuildingMask[bi]) buildingMask[bi] = 1;
+    }
+    // Merge player-placed building mask
+    for (let bi = 0; bi < PIXEL_RESOLUTION * PIXEL_RESOLUTION; bi++) {
+      if (placedBuildingBuildingMask[bi]) buildingMask[bi] = 1;
     }
 
     // Capture building pixel colors NOW (before river animation overwrites them)

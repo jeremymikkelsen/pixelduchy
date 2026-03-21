@@ -1277,6 +1277,17 @@ html, body, #root {
   color: #e0a030;
 }
 
+.bm-cost-original {
+  text-decoration: line-through;
+  opacity: 0.5;
+  margin-right: 3px;
+}
+
+.bm-cost-discounted {
+  color: #78d878;
+  font-weight: bold;
+}
+
 .bm-cost-free {
   font-size: 0.78rem;
   color: #78d878;

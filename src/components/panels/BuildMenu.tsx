@@ -5,20 +5,23 @@ import {
   BUILDING_CATEGORIES,
   BUILDING_DEFS,
   getBuildingsInCategory,
-  canAffordBuilding,
+  canAffordAdjustedBuilding,
+  getAdjustedCost,
   formatCost,
   formatYields,
   type BuildingCategory,
+  type BuildingCost,
   type BuildingDef,
   type BuildingType,
 } from '../../state/Building';
+import type { HouseData } from '../../state/Duchy';
 
 const COST_ICONS: Record<string, string> = {
   timber: '🪵', ore: '⛏️', stone: '🪨', iron: '⚙️',
   cloth: '🧵', gold: '💰', grain: '🌾',
 };
 
-function BuildingCard({ def, affordable }: { def: BuildingDef; affordable: boolean }) {
+function BuildingCard({ def, affordable, adjustedCost }: { def: BuildingDef; affordable: boolean; adjustedCost: BuildingCost }) {
   const [expanded, setExpanded] = useState(false);
 
   return (
@@ -42,11 +45,23 @@ function BuildingCard({ def, affordable }: { def: BuildingDef; affordable: boole
           <div className="bm-card-cost-row">
             <span className="bm-card-cost-label">Cost:</span>
             <span className="bm-card-cost-items">
-              {Object.entries(def.cost).map(([res, amt]) => (
-                <span key={res} className="bm-cost-item">
-                  {COST_ICONS[res] ?? ''} {amt}
-                </span>
-              ))}
+              {Object.entries(def.cost).map(([res, originalAmt]) => {
+                const adj = adjustedCost[res as keyof BuildingCost] ?? 0;
+                const discounted = adj < (originalAmt ?? 0);
+                return (
+                  <span key={res} className="bm-cost-item">
+                    {COST_ICONS[res] ?? ''}{' '}
+                    {discounted ? (
+                      <>
+                        <span className="bm-cost-original">{originalAmt}</span>
+                        <span className="bm-cost-discounted">{adj}</span>
+                      </>
+                    ) : (
+                      adj
+                    )}
+                  </span>
+                );
+              })}
               {Object.keys(def.cost).length === 0 && <span className="bm-cost-free">Free</span>}
             </span>
           </div>
@@ -82,7 +97,7 @@ function BuildingCard({ def, affordable }: { def: BuildingDef; affordable: boole
 
 export function BuildMenu() {
   const { openPanel, setOpenPanel } = useUIStore();
-  const { playerEconomy } = useGameStore();
+  const { playerEconomy, playerHouse } = useGameStore();
   const [activeCategory, setActiveCategory] = useState<BuildingCategory>('food_production');
 
   if (openPanel !== 'build' || !playerEconomy) return null;
@@ -117,7 +132,8 @@ export function BuildMenu() {
             <BuildingCard
               key={def.type}
               def={def}
-              affordable={canAffordBuilding(def, resources)}
+              adjustedCost={getAdjustedCost(def, playerHouse)}
+              affordable={canAffordAdjustedBuilding(def, resources, playerHouse)}
             />
           ))}
         </div>

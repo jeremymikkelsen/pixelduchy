@@ -4,12 +4,14 @@ import {
   ALL_BUILDING_TYPES,
   BUILDING_DEFS,
   canPlaceOnTerrain,
-  canAffordBuilding,
+  canAffordAdjustedBuilding,
+  getAdjustedCost,
   formatCost,
   formatYields,
   type BuildingDef,
   type BuildingType,
 } from '../../state/Building';
+import type { HouseData } from '../../state/Duchy';
 
 /** Check if a region is on a river path */
 function regionHasRiver(regionIdx: number, hydro: { rivers: number[][] }): boolean {
@@ -37,9 +39,10 @@ function getBuildStatus(
   hasRiver: boolean,
   hasForest: boolean,
   resources: Record<string, number>,
+  house: HouseData | null,
 ): BuildStatus {
   if (!canPlaceOnTerrain(def, terrain, hasRiver, hasForest)) return 'unavailable';
-  if (!canAffordBuilding(def, resources)) return 'unaffordable';
+  if (!canAffordAdjustedBuilding(def, resources, house)) return 'unaffordable';
   return 'available';
 }
 
@@ -55,9 +58,10 @@ const STATUS_TEXT_COLORS: Record<BuildStatus, string> = {
   unavailable: '#777',
 };
 
-function BuildOption({ def, status, onClick }: {
+function BuildOption({ def, status, adjustedCost, onClick }: {
   def: BuildingDef;
   status: BuildStatus;
+  adjustedCost: ReturnType<typeof getAdjustedCost>;
   onClick: () => void;
 }) {
   const clickable = status === 'available';
@@ -75,7 +79,7 @@ function BuildOption({ def, status, onClick }: {
       <span className="rp-build-icon">{def.icon}</span>
       <div className="rp-build-info">
         <span className="rp-build-name">{def.label}</span>
-        <span className="rp-build-cost">{formatCost(def.cost)}</span>
+        <span className="rp-build-cost">{formatCost(adjustedCost)}</span>
       </div>
       {def.yields.length > 0 && (
         <span className="rp-build-yields">{formatYields(def.yields)}</span>
@@ -183,7 +187,7 @@ export function RegionPanel() {
     ? ALL_BUILDING_TYPES
         .map(t => ({
           def: BUILDING_DEFS[t],
-          status: getBuildStatus(BUILDING_DEFS[t], terrain, hasRiver, hasForest, resources),
+          status: getBuildStatus(BUILDING_DEFS[t], terrain, hasRiver, hasForest, resources, isPlayerRegion ? (house ?? null) : null),
         }))
         .sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status])
     : [];
@@ -264,6 +268,7 @@ export function RegionPanel() {
                 key={def.type}
                 def={def}
                 status={status}
+                adjustedCost={getAdjustedCost(def, isPlayerRegion ? (house ?? null) : null)}
                 onClick={() => handleBuild(def.type)}
               />
             ))}

@@ -5,6 +5,8 @@
  */
 
 import type { ResourceType } from './Economy';
+import type { HouseData } from './Duchy';
+import { getBuildingCostModifier } from './HouseBonus';
 
 // ─── Building types ─────────────────────────────────────────────────────────
 
@@ -12,11 +14,11 @@ export type BuildingType =
   // Food production
   | 'field' | 'pasture' | 'orchard' | 'fishery'
   // Food processing
-  | 'smokehouse' | 'kitchen'
+  | 'smokehouse' | 'kitchen' | 'dairy' | 'bakery'
   // Resource production
   | 'woodcutter' | 'sawmill' | 'mill' | 'mine' | 'quarry' | 'bog_mine'
   // Processing
-  | 'smelter'
+  | 'smelter' | 'weaver'
   // Economic
   | 'market' | 'port'
   // Military
@@ -53,6 +55,11 @@ export interface BuildingYield {
   amount: number;
 }
 
+export interface BuildingConsumption {
+  resource: ResourceType | ResourceType[];  // single resource or priority list (try each in order)
+  amount: number;
+}
+
 export interface WorkerRequirement {
   role: 'farmers' | 'lumberjacks' | 'miners' | 'quarrymen' | 'smiths';
   count: number;
@@ -74,6 +81,8 @@ export interface BuildingDef {
   /** Additional placement constraints */
   requiresRiver?: boolean;
   requiresForest?: boolean;
+  /** Resources consumed each turn to produce yields */
+  consumes?: BuildingConsumption | BuildingConsumption[];  // single, or array for multi-input recipes
   /** Special notes for the player */
   notes?: string;
 }
@@ -206,6 +215,7 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     yields: [{ resource: 'smoked_meat', amount: 2 }],
     favorOnBuild: 0,
     validTerrain: ['lowland', 'highland', 'coast'],
+    consumes: { resource: ['cattle', 'deer', 'fish'], amount: 2 },
   },
   kitchen: {
     type: 'kitchen',
@@ -218,6 +228,33 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     yields: [{ resource: 'bread', amount: 2 }],
     favorOnBuild: 0,
     validTerrain: ['lowland', 'highland', 'coast'],
+    consumes: { resource: 'grain', amount: 2 },
+  },
+  dairy: {
+    type: 'dairy',
+    label: 'Dairy',
+    icon: '🧀',
+    mapLabel: 'DRY',
+    category: 'food_processing',
+    description: 'Churns milk and curds into cheese. Consumes 2 cattle per turn.',
+    cost: { timber: 2, gold: 1 },
+    yields: [{ resource: 'cheese', amount: 2 }],
+    favorOnBuild: 0,
+    validTerrain: ['lowland', 'highland'],
+    consumes: { resource: 'cattle', amount: 2 },
+  },
+  bakery: {
+    type: 'bakery',
+    label: 'Bakery',
+    icon: '🥧',
+    mapLabel: 'BKR',
+    category: 'food_processing',
+    description: 'Bakes pies from apples and grain. Consumes 1 apple + 1 grain per turn.',
+    cost: { timber: 3, gold: 1 },
+    yields: [{ resource: 'pie', amount: 2 }],
+    favorOnBuild: 0,
+    validTerrain: ['lowland', 'highland'],
+    consumes: [{ resource: 'apples', amount: 1 }, { resource: 'grain', amount: 1 }],
   },
 
   // ── Resource production ─────────────────────────────────────────
@@ -316,7 +353,21 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
     favorOnBuild: 0,
     workers: { role: 'smiths', count: 3 },
     validTerrain: ['lowland', 'highland', 'coast'],
+    consumes: { resource: 'ore', amount: 2 },
     notes: 'Consumes 2 ore → produces 2 iron',
+  },
+  weaver: {
+    type: 'weaver',
+    label: 'Weaver',
+    icon: '🧵',
+    mapLabel: 'WVR',
+    category: 'processing',
+    description: 'Spins wool and tans leather into cloth. Consumes 2 cattle per turn.',
+    cost: { timber: 3, gold: 1 },
+    yields: [{ resource: 'cloth', amount: 2 }],
+    favorOnBuild: 0,
+    validTerrain: ['lowland', 'highland'],
+    consumes: { resource: 'cattle', amount: 2 },
   },
 
   // ── Economic ────────────────────────────────────────────────────
@@ -476,6 +527,32 @@ export function canAffordBuilding(
 ): boolean {
   for (const [res, amount] of Object.entries(building.cost)) {
     if ((resources[res] ?? 0) < (amount ?? 0)) return false;
+  }
+  return true;
+}
+
+/** Get building cost adjusted for house bonuses */
+export function getAdjustedCost(def: BuildingDef, house: HouseData | null): BuildingCost {
+  if (!house) return { ...def.cost };
+  const adjusted: BuildingCost = {};
+  for (const [resource, amount] of Object.entries(def.cost)) {
+    if (amount !== undefined && amount > 0) {
+      const mod = getBuildingCostModifier(house, def.type, resource);
+      adjusted[resource as keyof BuildingCost] = Math.max(0, Math.floor(amount * mod));
+    }
+  }
+  return adjusted;
+}
+
+/** Check if a duchy can afford a building with house cost modifiers applied */
+export function canAffordAdjustedBuilding(
+  def: BuildingDef,
+  resources: Record<string, number>,
+  house: HouseData | null,
+): boolean {
+  const cost = getAdjustedCost(def, house);
+  for (const [key, amount] of Object.entries(cost)) {
+    if (amount !== undefined && amount > 0 && (resources[key] ?? 0) < amount) return false;
   }
   return true;
 }

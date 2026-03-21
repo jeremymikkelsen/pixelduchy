@@ -15,7 +15,7 @@ import type { SaveData } from './SaveLoad';
 import { AgImprovementType, assignAgImprovements } from './AgImprovements';
 import { KingData, selectKing } from './King';
 import type { WoodcutterState, FishingCampState, MineState, SmelterState, BuildingInstance, BuildingType } from './Building';
-import { BUILDING_DEFS, canPlaceOnTerrain, canAffordBuilding } from './Building';
+import { BUILDING_DEFS, canPlaceOnTerrain, canAffordAdjustedBuilding, getAdjustedCost } from './Building';
 import { assignWoodcutters } from './WoodcutterAssignment';
 import { assignFishingCamps } from './FishingCampAssignment';
 import { assignMines } from './MineAssignment';
@@ -270,15 +270,18 @@ export function placeBuilding(
   // Validate terrain
   if (!canPlaceOnTerrain(def, terrain, hasRiver, hasForest)) return false;
 
-  // Validate affordability
+  // Validate affordability (with house bonus modifiers)
   const res = eco.resources as unknown as Record<string, number>;
-  if (!canAffordBuilding(def, res)) return false;
+  const duchy = state.duchies[duchyIndex];
+  const house = duchy?.house ?? null;
+  if (!canAffordAdjustedBuilding(def, res, house)) return false;
 
   // Check region isn't already occupied by a player-placed building
   if (state.buildings.some(b => b.region === region)) return false;
 
-  // Deduct costs
-  for (const [resource, amount] of Object.entries(def.cost)) {
+  // Deduct adjusted costs
+  const adjustedCost = getAdjustedCost(def, house);
+  for (const [resource, amount] of Object.entries(adjustedCost)) {
     const key = resource as keyof typeof eco.resources;
     eco.resources[key] -= amount ?? 0;
   }

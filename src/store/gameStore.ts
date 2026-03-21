@@ -12,6 +12,7 @@ import type { KingData } from '../state/King';
 import type { DuchyEconomy, RationLevel, DevelopmentMode, ResourceType, LaborAssignment } from '../state/Economy';
 import { saveGame as persistSave, loadGame as loadSave, hasSavedGame, deleteSave, type SaveData } from '../state/SaveLoad';
 import type { BuildingType } from '../state/Building';
+import type { AgImprovementType } from '../state/AgImprovements';
 
 export interface GameStoreState {
   // Game session state (null = not in game)
@@ -130,6 +131,13 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
         smelterIngots[String(di)] = smelter.ingotCount;
       }
     }
+    // Serialize player-placed ag improvements
+    const playerAgRegions: Record<string, AgImprovementType> = {};
+    if (gameState.playerAgRegions) {
+      for (const [region, type] of gameState.playerAgRegions) {
+        playerAgRegions[String(region)] = type;
+      }
+    }
     persistSave(
       gameState.seed,
       gameState.mapSize,
@@ -144,6 +152,11 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       smelterIngots,
       gameState.buildings,
       gameState._nextBuildingId,
+      playerAgRegions,
+      gameState.playerWoodcutters?.map(wc => ({ regionIndex: wc.regionIndex, duchyIndex: wc.duchyIndex, lumberCount: wc.lumberCount })),
+      gameState.playerFishingCamps?.map(fc => ({ regionIndex: fc.regionIndex, duchyIndex: fc.duchyIndex })),
+      gameState.playerMines?.map(m => ({ regionIndex: m.regionIndex, duchyIndex: m.duchyIndex, oreCount: m.oreCount })),
+      gameState.playerSmelters?.map(s => ({ regionIndex: s.regionIndex, duchyIndex: s.duchyIndex, ingotCount: s.ingotCount })),
     );
     set({ hasSave: true });
   },

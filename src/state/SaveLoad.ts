@@ -8,7 +8,8 @@
 import type { DuchyEconomy } from './Economy';
 import { FOOD_KEYS } from './Economy';
 import type { Season } from './Season';
-import type { BuildingInstance } from './Building';
+import type { BuildingInstance, WoodcutterState, FishingCampState, MineState, SmelterState } from './Building';
+import type { AgImprovementType } from './AgImprovements';
 
 // ─── Save data format ───────────────────────────────────────────────────────
 
@@ -34,6 +35,12 @@ export interface SaveData {
   // Player-placed buildings
   buildings?: BuildingInstance[];
   _nextBuildingId?: number;
+  // Player-placed specialized buildings (registered into rich renderers)
+  playerAgRegions?: Record<string, AgImprovementType>;
+  playerWoodcutters?: Pick<WoodcutterState, 'regionIndex' | 'duchyIndex' | 'lumberCount'>[];
+  playerFishingCamps?: Pick<FishingCampState, 'regionIndex' | 'duchyIndex'>[];
+  playerMines?: Pick<MineState, 'regionIndex' | 'duchyIndex' | 'oreCount'>[];
+  playerSmelters?: Pick<SmelterState, 'regionIndex' | 'duchyIndex' | 'ingotCount'>[];
 }
 
 // ─── Save ───────────────────────────────────────────────────────────────────
@@ -52,6 +59,11 @@ export function saveGame(
   smelterIngots?: Record<string, number>,
   buildings?: BuildingInstance[],
   _nextBuildingId?: number,
+  playerAgRegions?: Record<string, AgImprovementType>,
+  playerWoodcutters?: Pick<WoodcutterState, 'regionIndex' | 'duchyIndex' | 'lumberCount'>[],
+  playerFishingCamps?: Pick<FishingCampState, 'regionIndex' | 'duchyIndex'>[],
+  playerMines?: Pick<MineState, 'regionIndex' | 'duchyIndex' | 'oreCount'>[],
+  playerSmelters?: Pick<SmelterState, 'regionIndex' | 'duchyIndex' | 'ingotCount'>[],
 ): void {
   const data: SaveData = {
     version: SAVE_VERSION,
@@ -69,6 +81,11 @@ export function saveGame(
     smelterIngots,
     buildings: buildings ? structuredClone(buildings) : undefined,
     _nextBuildingId,
+    playerAgRegions,
+    playerWoodcutters: playerWoodcutters ? structuredClone(playerWoodcutters) : undefined,
+    playerFishingCamps: playerFishingCamps ? structuredClone(playerFishingCamps) : undefined,
+    playerMines: playerMines ? structuredClone(playerMines) : undefined,
+    playerSmelters: playerSmelters ? structuredClone(playerSmelters) : undefined,
   };
 
   try {

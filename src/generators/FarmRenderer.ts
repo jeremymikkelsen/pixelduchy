@@ -304,6 +304,9 @@ export class FarmRenderer {
           pastureMap.get(r)!.interiorPixels.push({ idx: i, color });
           break;
         }
+        case 'orchard':
+          pixels[i] = this._orchardPixel(px, py, m, season, noise);
+          break;
       }
     }
 
@@ -478,6 +481,129 @@ export class FarmRenderer {
     const n = (noise(px * 0.18, py * 0.18) + 1) / 2;
     const base = n > 0.5 ? PASTURE_B[season] : PASTURE_A[season];
     return applyBrightness(base, 1.0);
+  }
+
+  // ── Orchard pixel — cute rows of apple trees with seasonal graphics ────────
+  private _orchardPixel(
+    px: number, py: number, m: RegionMeta, season: Season,
+    noise: (x: number, y: number) => number,
+  ): number {
+    // Project onto region axes to create aligned grid
+    const along = px * m.longX + py * m.longY;
+    const perp = px * m.perpX + py * m.perpY;
+
+    // Grid spacing between trees
+    const spacing = 7;
+    const cellAlong = Math.round(along / spacing) * spacing;
+    const cellPerp = Math.round(perp / spacing) * spacing;
+
+    // Offset from nearest tree center
+    const dx = along - cellAlong;
+    const dy = perp - cellPerp;
+
+    // Per-tree noise for slight size/shape variation
+    const treeNoise = noise(cellAlong * 0.31, cellPerp * 0.31);
+    const canopyRadius = 2.3 + treeNoise * 0.4;
+
+    // Trunk: 1px wide, extends below canopy center
+    const isTrunk = Math.abs(dx) < 0.7 && dy >= 0.5 && dy < 2.8;
+
+    // Canopy: circle offset upward from grid center
+    const canopyDx = dx;
+    const canopyDy = dy + 0.8;  // canopy centered slightly above grid point
+    const canopyDist = Math.sqrt(canopyDx * canopyDx + canopyDy * canopyDy);
+    const isCanopy = canopyDist < canopyRadius;
+
+    // Shade variation within canopy
+    const shadeN = noise(px * 0.6 + 33, py * 0.6 + 33);
+
+    // ── Ground (between trees) ──
+    if (!isCanopy && !isTrunk) {
+      return this._orchardGround(px, py, season, noise);
+    }
+
+    // ── Trunk ──
+    if (isTrunk && !isCanopy) {
+      if (season === Season.Winter) {
+        return applyBrightness(shadeN > 0 ? 0x4a3520 : 0x3c2a18, 1.0);
+      }
+      return applyBrightness(shadeN > 0 ? 0x5a3c20 : 0x4a3018, 1.0);
+    }
+
+    // ── Canopy — seasonal ──
+
+    // Winter: bare branches — sparse brown twigs
+    if (season === Season.Winter) {
+      // Only show ~40% of canopy pixels as branches, rest is sky/ground
+      const branchN = noise(px * 0.8 + 77, py * 0.8 + 77);
+      if (branchN > 0.1 || canopyDist > canopyRadius * 0.6) {
+        // Gaps in bare branches — show ground underneath
+        return this._orchardGround(px, py, season, noise);
+      }
+      return applyBrightness(shadeN > 0 ? 0x5a3c20 : 0x4a3018, 1.0);
+    }
+
+    // Spring: pink/white blossoms on light green
+    if (season === Season.Spring) {
+      const blossomN = noise(px * 1.2 + 11, py * 1.2 + 11);
+      // ~35% blossom pixels
+      if (blossomN > 0.25) {
+        const pinkN = noise(px * 1.8 + 55, py * 1.8 + 55);
+        if (pinkN > 0.3) {
+          return applyBrightness(0xf0c0d0, 1.0);   // light pink
+        }
+        return applyBrightness(0xe8d8e0, 1.0);     // white-pink
+      }
+      // Green leaves behind blossoms
+      return applyBrightness(shadeN > 0.1 ? 0x5ca830 : 0x489020, 1.0);
+    }
+
+    // Summer: lush dark green canopy
+    if (season === Season.Summer) {
+      // Occasional darker shadow patches for depth
+      if (shadeN < -0.3 && canopyDist < canopyRadius * 0.5) {
+        return applyBrightness(0x2a6018, 1.0);     // deep shadow
+      }
+      return applyBrightness(shadeN > 0.1 ? 0x48902a : 0x3a7820, 1.0);
+    }
+
+    // Fall: warm orange/red foliage + red apple dots
+    // Apple: small bright red dots scattered in canopy
+    const appleN = noise(px * 2.2 + 44, py * 2.2 + 44);
+    if (appleN > 0.65) {
+      return applyBrightness(0xcc2222, 1.0);       // bright red apple
+    }
+    // Fall foliage
+    const leafTone = noise(px * 0.9 + 22, py * 0.9 + 22);
+    if (leafTone > 0.3) {
+      return applyBrightness(0xc87828, 1.0);       // orange
+    }
+    if (leafTone > -0.1) {
+      return applyBrightness(0xb06020, 1.0);       // burnt orange
+    }
+    return applyBrightness(0x8a4818, 1.0);         // dark amber
+  }
+
+  // ── Orchard ground — grassy with seasonal variation ─────────────────────────
+  private _orchardGround(
+    px: number, py: number, season: Season,
+    noise: (x: number, y: number) => number,
+  ): number {
+    const n = noise(px * 0.15, py * 0.15);
+    switch (season) {
+      case Season.Winter: {
+        // Patchy snow on brown ground
+        const snowN = noise(px * 0.08, py * 0.08);
+        if (snowN > 0.2) return applyBrightness(snowN > 0.5 ? 0xdce4ec : 0xc4d0dc, 0.95);
+        return applyBrightness(n > 0 ? 0x685040 : 0x584030, 1.0);
+      }
+      case Season.Spring:
+        return applyBrightness(n > 0 ? 0x5c9838 : 0x4a8828, 1.0);   // bright spring grass
+      case Season.Summer:
+        return applyBrightness(n > 0 ? 0x4a8828 : 0x3c7820, 1.0);   // lush green grass
+      case Season.Fall:
+        return applyBrightness(n > 0 ? 0x6a7828 : 0x586828, 1.0);   // yellowing grass
+    }
   }
 
 }

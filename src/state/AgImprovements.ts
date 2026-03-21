@@ -9,7 +9,7 @@ import type { Duchy } from './Duchy';
 import type { RoadSegment } from '../generators/RoadGenerator';
 import { RIVER_THRESHOLD } from '../generators/utils';
 
-export type AgImprovementType = 'grain' | 'garden' | 'pasture';
+export type AgImprovementType = 'grain' | 'garden' | 'pasture' | 'orchard';
 
 /**
  * Assign 3 grain fields, 2 gardens, and 2 pastures per duchy.

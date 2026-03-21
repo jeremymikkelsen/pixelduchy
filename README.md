@@ -88,6 +88,36 @@ Each of the 9 houses has a unique visual identity — distinct manor, cottage, a
 | Varek | Roman | Crimson tile | Grey stone | Crenellated battlements | Wheat | War horses |
 | Brynn | Scottish Highland | Weathered slate | Rough dry-stone | Conical broch tower | Oats | Highland cattle |
 
+## Building Sprites
+
+Each building type has a unique 9×10 pixel-art sprite rendered by `PlacedBuildingRenderer`. Roof color is tinted by category; shape distinguishes the type.
+
+| Type | Category | Visual |
+|------|----------|--------|
+| field | food_production | Crop rows with fence rail |
+| pasture | food_production | Fenced enclosure with grass tufts |
+| orchard | food_production | Tree canopy clusters on trunks |
+| fishery | food_production | Small hut with pier + water |
+| smokehouse | food_processing | Building with tall chimney + smoke |
+| kitchen | food_processing | Wide building with chimney |
+| dairy | food_processing | Barn-shaped roof |
+| bakery | food_processing | Building with chimney puff |
+| woodcutter | resource_production | Small hut with log pile |
+| sawmill | resource_production | Building with stacked lumber |
+| mill | resource_production | Tall windmill with arms |
+| mine | resource_production | Cave entrance in hillside |
+| quarry | resource_production | Open pit with stone blocks |
+| bog_mine | resource_production | Low structure with dark pool |
+| smelter | processing | Building with large chimney stack |
+| weaver | processing | Building with fabric accent |
+| market | economic | Open stall with awning |
+| port | economic | Wide warehouse on pier stilts |
+| barracks | military | Fortified with battlements |
+| church | social | Tall steeple with cross |
+| castle | social | Twin towers with flags |
+| tavern | social | Building with hanging sign |
+| house | residential | Generic residential (fallback) |
+
 ## Key Technical Details
 
 - **Resolution**: 1024x1024 pixels rasterized, displayed at 2048x2048 world units with `pixelArt: true`

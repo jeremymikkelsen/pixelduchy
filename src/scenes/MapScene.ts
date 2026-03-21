@@ -109,6 +109,12 @@ export class MapScene extends Phaser.Scene {
   // Building + bridge pixels to restore after river animation each frame
   private _buildingPixels: { idx: number; color: number }[] = [];
 
+  // Cached pixel snapshot taken BEFORE placed buildings are stamped.
+  // Used by _quickBuildingRerender() to avoid the full ~3s pipeline.
+  private _preBuildingPixels: Uint32Array | null = null;
+  // Cached building mask from the last full render (for river avoidance)
+  private _cachedBuildingMask: Uint8Array | null = null;
+
   // Pre-loaded manor sprites (from PNGs) — one per duchy style
   private _manorSprites: LoadedSprite[] = [];
 
@@ -156,7 +162,15 @@ export class MapScene extends Phaser.Scene {
       // onMapDirty — re-render map without advancing turn (e.g. building placed)
       () => {
         if (!this._state) return;
-        this._renderMap();
+        const t0 = performance.now();
+        // Use fast path if we have a cached pre-building snapshot
+        if (this._preBuildingPixels && this._pixels && this._canvasTex) {
+          this._quickBuildingRerender();
+        } else {
+          this._renderMap();
+        }
+        const dt = performance.now() - t0;
+        console.log(`[MapScene] onMapDirty took ${dt.toFixed(0)}ms`);
         this._pushStateToStore();
       },
     );
@@ -779,6 +793,61 @@ export class MapScene extends Phaser.Scene {
   }
 
   /**
+   * Fast re-render: stamp only the newest placed building onto the existing
+   * fully-rendered pixel buffer. Skips the entire ground/trees/mountains
+   * pipeline (~3s savings). Full render still runs on season/turn changes.
+   */
+  private _quickBuildingRerender(): void {
+    const pixels = this._pixels;
+    const { topo, season } = this._state;
+    const NN = PIXEL_RESOLUTION;
+
+    // Restore the fully-rendered snapshot (without any previous quick-stamps
+    // that might have accumulated) so we start clean each time
+    pixels.set(this._preBuildingPixels!);
+
+    // Stamp ALL placed buildings onto the restored buffer
+    const placedBuildingRenderer = new PlacedBuildingRenderer();
+    const { buildingMask: newPlacedMask } = placedBuildingRenderer.render(
+      pixels, NN, topo, this._state.buildings, season,
+    );
+
+    // Merge new placed building pixels into the building restoration list
+    // so river animation doesn't overdraw them
+    const newBuildingPixels: { idx: number; color: number }[] = [];
+    for (let bi = 0; bi < NN * NN; bi++) {
+      if (newPlacedMask[bi]) {
+        newBuildingPixels.push({ idx: bi, color: pixels[bi] });
+      }
+    }
+    // Keep existing bridge/structure building pixels, add new placed building pixels
+    this._buildingPixels = [
+      ...this._buildingPixels.filter(bp => !newPlacedMask[bp.idx]),
+      ...newBuildingPixels,
+    ];
+
+    // Merge into cached building mask for river avoidance
+    if (this._cachedBuildingMask) {
+      for (let i = 0; i < NN * NN; i++) {
+        if (newPlacedMask[i]) this._cachedBuildingMask[i] = 1;
+      }
+      if (this._riverAnimator) {
+        this._riverAnimator.buildingMask = this._cachedBuildingMask;
+      }
+    }
+
+    // Re-stamp duchy borders on top
+    for (const bp of this._duchyBorderPixels) {
+      pixels[bp.idx] = bp.color;
+    }
+
+    // Push updated pixels to the canvas texture
+    new Uint8ClampedArray(this._imageData.data.buffer).set(new Uint8Array(pixels.buffer));
+    this._ctx.putImageData(this._imageData, 0, 0);
+    this._canvasTex.refresh();
+  }
+
+  /**
    * Re-render the map from current game state (called on init and each turn).
    */
   private _renderMap(): void {
@@ -799,26 +868,38 @@ export class MapScene extends Phaser.Scene {
 
   private _renderMapInner(): void {
     const { topo, hydro, seed, season } = this._state;
+    const _t: Record<string, number> = {};
+    const _mark = (label: string, fn: () => void) => {
+      const t0 = performance.now();
+      fn();
+      _t[label] = performance.now() - t0;
+    };
 
     // Ground with seasonal palettes
     const renderer = new GroundRenderer();
-    const pixels = renderer.render(topo, PIXEL_RESOLUTION, hydro, season);
+    let pixels!: Uint32Array;
+    _mark('ground', () => { pixels = renderer.render(topo, PIXEL_RESOLUTION, hydro, season); });
 
     // Duchy territory tint + borders
-    if (renderer.regionGrid) {
-      renderDuchies(pixels, renderer.regionGrid, this._state, PIXEL_RESOLUTION);
-    }
+    _mark('duchies', () => {
+      if (renderer.regionGrid) {
+        renderDuchies(pixels, renderer.regionGrid, this._state, PIXEL_RESOLUTION);
+      }
+    });
 
     // Agricultural improvements — grain fields, gardens, cow pastures
     const farmRenderer = new FarmRenderer();
-    if (this._state.agImprovements && renderer.regionGrid) {
-      farmRenderer.render(pixels, PIXEL_RESOLUTION, this._state.agImprovements,
-        topo, renderer.regionGrid, seed, season, this._state.regionToDuchy);
-    }
+    _mark('farms', () => {
+      if (this._state.agImprovements && renderer.regionGrid) {
+        farmRenderer.render(pixels, PIXEL_RESOLUTION, this._state.agImprovements,
+          topo, renderer.regionGrid, seed, season, this._state.regionToDuchy);
+      }
+    });
 
     // Static rivers — rendered BEFORE coastal so riverMask can suppress beach/waves at river mouths
     const roadRenderer = new RoadRenderer();
-    const riverMask = renderer.renderRivers(pixels, topo, hydro, PIXEL_RESOLUTION);
+    let riverMask!: Uint8Array;
+    _mark('rivers', () => { riverMask = renderer.renderRivers(pixels, topo, hydro, PIXEL_RESOLUTION); });
 
     // Beaches, ocean sparkles, sea stacks (pass riverMask to suppress sand/waves at river mouths)
     const coastalRenderer = new CoastalRenderer();
@@ -857,10 +938,28 @@ export class MapScene extends Phaser.Scene {
       }
     }
 
+    // Merge player-placed specialized buildings into world-generated maps for rendering
+    const allWoodcutters = new Map(this._state.woodcutters);
+    for (const wc of this._state.playerWoodcutters) {
+      allWoodcutters.set(wc.regionIndex + 100000, wc);
+    }
+    const allMines = new Map(this._state.mines);
+    for (const m of this._state.playerMines) {
+      allMines.set(m.regionIndex + 100000, m);
+    }
+    const allSmelters = new Map(this._state.smelters);
+    for (const s of this._state.playerSmelters) {
+      allSmelters.set(s.regionIndex + 100000, s);
+    }
+    const allFishingCamps = new Map(this._state.fishingCamps);
+    for (const fc of this._state.playerFishingCamps) {
+      allFishingCamps.set(fc.regionIndex + 100000, fc);
+    }
+
     // Woodcutter huts + lumber stacks + sawmill dam/wheel (before trees so clearing works)
     const wcRenderer = new WoodcutterRenderer();
     const { woodcutterMask, woodcutterBuildingMask, renderData: wcRenderData } = wcRenderer.render(
-      pixels, PIXEL_RESOLUTION, this._state.woodcutters,
+      pixels, PIXEL_RESOLUTION, allWoodcutters,
       seed, season, riverMask, this._state.removedTrees,
     );
     // Merge woodcutter mask into structureMask so trees avoid the clearing
@@ -871,7 +970,7 @@ export class MapScene extends Phaser.Scene {
     // Iron mines (before trees so clearing works)
     const mineRenderer = new MineRenderer();
     const { mineMask, mineBuildingMask, renderData: mineRenderData } = mineRenderer.render(
-      pixels, PIXEL_RESOLUTION, this._state.mines, seed, season,
+      pixels, PIXEL_RESOLUTION, allMines, seed, season,
     );
     for (let i = 0; i < mineMask.length; i++) {
       if (mineMask[i]) structureMask[i] = 1;
@@ -880,7 +979,7 @@ export class MapScene extends Phaser.Scene {
     // Smelters (before trees so clearing works)
     const smelterRenderer = new SmelterRenderer();
     const { smelterMask, smelterBuildingMask, renderData: smelterRenderData } = smelterRenderer.render(
-      pixels, PIXEL_RESOLUTION, this._state.smelters, seed, season,
+      pixels, PIXEL_RESOLUTION, allSmelters, seed, season,
     );
     for (let i = 0; i < smelterMask.length; i++) {
       if (smelterMask[i]) structureMask[i] = 1;
@@ -896,26 +995,31 @@ export class MapScene extends Phaser.Scene {
     }
 
     // Trees: 3-step pipeline
-    // 1. Compute all tree positions (no drawing yet) — needed for woodcutter targeting
     const treeRenderer = new TreeRenderer();
-    const allPlacedTrees = treeRenderer.placeTrees(
-      topo, hydro, PIXEL_RESOLUTION, seed, season,
-      structureMask, this._state.removedTrees,
-    );
+    let allPlacedTrees!: ReturnType<typeof treeRenderer.placeTrees>;
+    _mark('trees_place', () => {
+      allPlacedTrees = treeRenderer.placeTrees(
+        topo, hydro, PIXEL_RESOLUTION, seed, season,
+        structureMask, this._state.removedTrees,
+      );
+    });
 
-    // 2. Woodcutter selects targets from placed trees (but does NOT remove yet —
-    //    trees stay in the static render so they don't "pop" at season transition)
-    const targetKeys = wcRenderer.findTargetsAndDrawPaths(
-      pixels, PIXEL_RESOLUTION, wcRenderData, allPlacedTrees,
-      this._state.removedTrees, riverMask, seed,
-    );
+    let targetKeys!: ReturnType<typeof wcRenderer.findTargetsAndDrawPaths>;
+    _mark('wc_targets', () => {
+      targetKeys = wcRenderer.findTargetsAndDrawPaths(
+        pixels, PIXEL_RESOLUTION, wcRenderData, allPlacedTrees,
+        this._state.removedTrees, riverMask, seed,
+      );
+    });
 
-    // 3. Render trees — targets are still present in the static render
-    const treeResult = treeRenderer.renderTrees(
-      pixels, topo, hydro, PIXEL_RESOLUTION, seed, season,
-      structureMask, this._state.removedTrees,
-    );
-    const treeMask = treeResult.treeMask;
+    let treeMask!: Uint8Array;
+    _mark('trees_render', () => {
+      const treeResult = treeRenderer.renderTrees(
+        pixels, topo, hydro, PIXEL_RESOLUTION, seed, season,
+        structureMask, this._state.removedTrees,
+      );
+      treeMask = treeResult.treeMask;
+    });
 
     // 4. Now mark targets as removed for next season
     for (const key of targetKeys) this._state.removedTrees.add(key);
@@ -923,7 +1027,7 @@ export class MapScene extends Phaser.Scene {
     // Fishing camps — dock/wharf, hut, racks, static fishermen (before trees so clearing works)
     const fishingRenderer = new FishingCampRenderer();
     const { campMask, renderData: fishRenderData } = fishingRenderer.render(
-      pixels, PIXEL_RESOLUTION, this._state.fishingCamps, season, riverMask, renderer.regionGrid,
+      pixels, PIXEL_RESOLUTION, allFishingCamps, season, riverMask, renderer.regionGrid,
     );
     // Merge camp mask into structureMask so trees avoid the camp area
     for (let i = 0; i < campMask.length; i++) {
@@ -932,7 +1036,9 @@ export class MapScene extends Phaser.Scene {
 
     // Mountain extrusion with seasonal snow line
     const mountainRenderer = new MountainRenderer();
-    mountainRenderer.render(pixels, topo, PIXEL_RESOLUTION, seed, treeMask, season, roadMask);
+    _mark('mountains', () => {
+      mountainRenderer.render(pixels, topo, PIXEL_RESOLUTION, seed, treeMask, season, roadMask);
+    });
     this._extrusionMap = mountainRenderer.extrusionMap;
     this._screenToSource = mountainRenderer.screenToSource;
 
@@ -957,7 +1063,10 @@ export class MapScene extends Phaser.Scene {
     coastalRenderer.extrusionMap = mountainRenderer.extrusionMap;
 
     // Structures (3/4 perspective with ground shadows)
-    const buildingMask = structureRenderer.renderSprites(pixels, PIXEL_RESOLUTION, structures, season, this._manorSprites.length > 0 ? this._manorSprites : undefined);
+    let buildingMask!: Uint8Array;
+    _mark('structures_render', () => {
+      buildingMask = structureRenderer.renderSprites(pixels, PIXEL_RESOLUTION, structures, season, this._manorSprites.length > 0 ? this._manorSprites : undefined);
+    });
 
     // Merge woodcutter BUILDING mask (tight, actual pixels only) so rivers
     // don't overdraw the hut/lumber — but river can flow through the clearing
@@ -979,6 +1088,9 @@ export class MapScene extends Phaser.Scene {
     for (let bi = 0; bi < PIXEL_RESOLUTION * PIXEL_RESOLUTION; bi++) {
       if (placedBuildingBuildingMask[bi]) buildingMask[bi] = 1;
     }
+
+    // Cache building mask for quick re-renders
+    this._cachedBuildingMask = buildingMask;
 
     // Capture building pixel colors NOW (before river animation overwrites them)
     const buildingPixelColors: { idx: number; color: number }[] = [];
@@ -1139,6 +1251,14 @@ export class MapScene extends Phaser.Scene {
     } else {
       this._smelterAnimator = null;
     }
+
+    // Log render timing breakdown
+    const totalMs = Object.values(_t).reduce((a, b) => a + b, 0);
+    console.log(`[MapScene] render breakdown (${totalMs.toFixed(0)}ms total):`
+      + Object.entries(_t).map(([k, v]) => `\n  ${k}: ${v.toFixed(0)}ms`).join(''));
+
+    // Cache final rendered pixels for fast building re-renders
+    this._preBuildingPixels = pixels.slice();
 
     // Store refs
     this._pixels = pixels;

@@ -37,8 +37,8 @@ const COW_LEFT: number[][] = [
   [_, 0, _, 1],
 ];
 
-// Inset from pasture bounding box — just enough to keep the sprite from clipping
-const EDGE_INSET = 2;
+// Inset from pasture bounding box — keep cows well inside the fence line
+const EDGE_INSET = 5;
 
 // ── Cow instance ──────────────────────────────────────────────────────────────
 interface CowState {
@@ -129,8 +129,8 @@ export class PastureAnimator {
           phaseY: rng() * Math.PI * 2,
           freqX: 0.00045 + rng() * 0.00020,
           freqY: 0.00038 + rng() * 0.00018,
-          radiusX: Math.min(safeW * 0.35, 18),
-          radiusY: Math.min(safeH * 0.30, 14),
+          radiusX: Math.min(safeW * 0.28, 14),
+          radiusY: Math.min(safeH * 0.22, 10),
           mirrorBase: rng() > 0.5,
         });
       }

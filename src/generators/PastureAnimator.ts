@@ -90,12 +90,30 @@ export class PastureAnimator {
       const innerH = maxY - minY;
       if (innerW < 10 || innerH < 10) continue;
 
-      // Build set of valid pixel indices and base color map
-      const validPixels = new Set<number>();
+      // Build set of all pixel indices and base color map
+      const allPixels = new Set<number>();
       const baseColors = new Map<number, number>();
       for (const p of interiorPixels) {
-        validPixels.add(p.idx);
+        allPixels.add(p.idx);
         baseColors.set(p.idx, p.color);
+      }
+
+      // Erode by 2px from boundary — cow-safe interior pixels only
+      // A pixel is on the boundary if any 4-neighbor is outside the region
+      const validPixels = new Set<number>();
+      for (const idx of allPixels) {
+        const px = idx % N;
+        const py = (idx - px) / N;
+        // Check if all pixels within 2px are inside the region
+        let interior = true;
+        outer:
+        for (let dy = -2; dy <= 2; dy++) {
+          for (let dx = -2; dx <= 2; dx++) {
+            const ni = (py + dy) * N + (px + dx);
+            if (!allPixels.has(ni)) { interior = false; break outer; }
+          }
+        }
+        if (interior) validPixels.add(idx);
       }
 
       // Number of cows: 1 to maxCowsPerPasture, scaled by area

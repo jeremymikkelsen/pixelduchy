@@ -8,7 +8,6 @@ import { HydrologyGenerator } from '../generators/HydrologyGenerator';
 import type { Duchy } from './Duchy';
 import type { RoadSegment } from '../generators/RoadGenerator';
 import { RIVER_THRESHOLD } from '../generators/utils';
-import { buildAdjacencyList } from '../utils/adjacency';
 
 export type AgImprovementType = 'grain' | 'garden' | 'pasture' | 'orchard';
 
@@ -37,14 +36,10 @@ export function assignAgImprovements(
     for (const r of road.path) roadRegions.add(r);
   }
 
-  const WATER_TERRAINS = new Set(['ocean', 'water', 'coast']);
-  const adj = buildAdjacencyList(topo.mesh);
-
   for (const duchy of duchies) {
     const rng = mulberry32(seed ^ (duchy.id * 0x1d3c7 + 0xfa12b8c3));
 
-    // Find eligible regions: lowland, no river, mid elevation, not capital, not on road,
-    // not bordering water/ocean/coast (prevents broken fences and clipped pastures)
+    // Find eligible regions: lowland, no river, mid elevation, not capital, not on road
     const eligible = duchy.regions.filter(r => {
       if (r === duchy.capitalRegion) return false;
       const terrain = topo.terrainType[r];
@@ -53,13 +48,6 @@ export function assignAgImprovements(
       if (elev < 0.08 || elev > 0.40) return false;
       if (hydro.flowAccumulation[r] >= RIVER_THRESHOLD) return false;
       if (roadRegions.has(r)) return false;
-      // Exclude regions that neighbor water/ocean/coast
-      const neighbors = adj[r];
-      if (neighbors) {
-        for (const n of neighbors) {
-          if (WATER_TERRAINS.has(topo.terrainType[n])) return false;
-        }
-      }
       return true;
     });
 

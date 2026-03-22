@@ -57,16 +57,30 @@ export class FenceRenderer {
         const prev     = prevEdge(e);
         const neighbor = triangles[prev];   // region across this Voronoi edge
         const opp      = halfedges[prev];
-        if (opp === -1) continue;           // hull edge — no circumcenter on the other side, skip
-        const toTri    = triOfEdge(opp);
 
         // Only draw fence on exterior edges (neighbour is not a pasture)
-        if (improvements.get(neighbor) !== 'pasture') {
-          const x0 = Math.round(triCenters[fromTri].x / scale);
-          const y0 = Math.round(triCenters[fromTri].y / scale);
+        if (improvements.get(neighbor) === 'pasture') continue;
+
+        const x0 = Math.round(triCenters[fromTri].x / scale);
+        const y0 = Math.round(triCenters[fromTri].y / scale);
+
+        if (opp === -1) {
+          // Hull edge — no circumcenter on the other side.
+          // Use the midpoint between the two region centers as the endpoint
+          // so the fence still closes along the hull boundary.
+          const pA = topo.mesh.points[r];
+          const pB = topo.mesh.points[neighbor];
+          const mx = Math.round(((pA.x + pB.x) / 2) / scale);
+          const my = Math.round(((pA.y + pB.y) / 2) / scale);
+          if (this._inBounds(x0, y0, N) || this._inBounds(mx, my, N)) {
+            this._post(pixels, x0, y0, N, ext, fencePixels, regionGrid, r, neighbor);
+            this._post(pixels, mx, my, N, ext, fencePixels, regionGrid, r, neighbor);
+            this._rail(pixels, x0, y0, mx, my, N, ext, fencePixels, regionGrid, r, neighbor);
+          }
+        } else {
+          const toTri = triOfEdge(opp);
           const x1 = Math.round(triCenters[toTri].x  / scale);
           const y1 = Math.round(triCenters[toTri].y  / scale);
-
           if (this._inBounds(x0, y0, N) || this._inBounds(x1, y1, N)) {
             this._post(pixels, x0, y0, N, ext, fencePixels, regionGrid, r, neighbor);
             this._post(pixels, x1, y1, N, ext, fencePixels, regionGrid, r, neighbor);

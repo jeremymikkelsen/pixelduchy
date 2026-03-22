@@ -14,7 +14,7 @@
 
 import { createNoise2D } from 'simplex-noise';
 import { TopographyGenerator, mulberry32 } from './TopographyGenerator';
-import { packABGR, applyBrightness } from './TerrainPalettes';
+import { packABGR, applyBrightness, darkenPixel } from './TerrainPalettes';
 import { Season } from '../state/Season';
 import type { AgImprovementType } from '../state/AgImprovements';
 import { getHouseStyle } from './HouseStyles';
@@ -219,13 +219,6 @@ function getOrchardPalette(season: Season, _seed: number): OrchardPalette {
   }
 }
 
-function _darkenPixel(abgr: number, factor: number): number {
-  const r = Math.floor((abgr & 0xff) * factor);
-  const g = Math.floor(((abgr >> 8) & 0xff) * factor);
-  const b = Math.floor(((abgr >> 16) & 0xff) * factor);
-  return (255 << 24) | (b << 16) | (g << 8) | r;
-}
-
 // ── RegionMeta: axis info per improvement region ──────────────────────────────
 interface RegionMeta {
   minX: number; maxX: number; minY: number; maxY: number;
@@ -233,6 +226,33 @@ interface RegionMeta {
   longX: number; longY: number;
   // Perp unit vector (stalk growth direction)
   perpX: number; perpY: number;
+}
+
+// ── Orchard tree placement instance ──────────────────────────────────────────
+interface OrchardTree { tx: number; ty: number; templateIdx: number; flipped: boolean }
+
+/** Compute PCA long-axis and perpendicular from accumulated region stats. */
+function computePCAAxis(s: { sx: number; sy: number; sxx: number; syy: number; sxy: number; n: number }) {
+  const cx = s.sx / s.n;
+  const cy = s.sy / s.n;
+  const cxx = s.sxx / s.n - cx * cx;
+  const cyy = s.syy / s.n - cy * cy;
+  const cxy = s.sxy / s.n - cx * cy;
+
+  let lx: number, ly: number;
+  if (Math.abs(cxy) > 1e-6) {
+    const diff = cxx - cyy;
+    const disc = Math.sqrt(diff * diff + 4 * cxy * cxy);
+    const lambda = ((cxx + cyy) + disc) / 2;
+    lx = lambda - cyy; ly = cxy;
+  } else if (cxx >= cyy) {
+    lx = 1; ly = 0;
+  } else {
+    lx = 0; ly = 1;
+  }
+  const len = Math.sqrt(lx * lx + ly * ly) || 1;
+  lx /= len; ly /= len;
+  return { cx, cy, longX: lx, longY: ly, perpX: -ly, perpY: lx };
 }
 
 // ── Public output ─────────────────────────────────────────────────────────────
@@ -303,32 +323,12 @@ export class FarmRenderer {
 
     for (const [r, s] of stats) {
       if (s.n === 0) continue;
-      const cx = s.sx / s.n;
-      const cy = s.sy / s.n;
-      const cxx = s.sxx / s.n - cx * cx;
-      const cyy = s.syy / s.n - cy * cy;
-      const cxy = s.sxy / s.n - cx * cy;
-
-      // Eigenvector of larger eigenvalue of [[cxx, cxy], [cxy, cyy]]
-      let lx: number, ly: number;
-      if (Math.abs(cxy) > 1e-6) {
-        const diff = cxx - cyy;
-        const disc = Math.sqrt(diff * diff + 4 * cxy * cxy);
-        const lambda = ((cxx + cyy) + disc) / 2;
-        lx = lambda - cyy;
-        ly = cxy;
-      } else if (cxx >= cyy) {
-        lx = 1; ly = 0;
-      } else {
-        lx = 0; ly = 1;
-      }
-      const len = Math.sqrt(lx * lx + ly * ly) || 1;
-      lx /= len; ly /= len;
+      const pca = computePCAAxis(s);
 
       meta.set(r, {
         minX: s.minX, maxX: s.maxX, minY: s.minY, maxY: s.maxY,
-        longX: lx, longY: ly,
-        perpX: -ly, perpY: lx,
+        longX: pca.longX, longY: pca.longY,
+        perpX: pca.perpX, perpY: pca.perpY,
       });
 
       if (improvements.get(r) === 'garden') {
@@ -770,38 +770,17 @@ export class FarmRenderer {
     // Stamp trees in each orchard region
     for (const [r, s] of stats) {
       if (s.n === 0) continue;
-      const cx = s.sx / s.n;
-      const cy = s.sy / s.n;
-      const cxx = s.sxx / s.n - cx * cx;
-      const cyy = s.syy / s.n - cy * cy;
-      const cxy = s.sxy / s.n - cx * cy;
-
-      let lx: number, ly: number;
-      if (Math.abs(cxy) > 1e-6) {
-        const diff = cxx - cyy;
-        const disc = Math.sqrt(diff * diff + 4 * cxy * cxy);
-        const lambda = ((cxx + cyy) + disc) / 2;
-        lx = lambda - cyy; ly = cxy;
-      } else if (cxx >= cyy) {
-        lx = 1; ly = 0;
-      } else {
-        lx = 0; ly = 1;
-      }
-      const len = Math.sqrt(lx * lx + ly * ly) || 1;
-      lx /= len; ly /= len;
-      const perpX = -ly, perpY = lx;
+      const pca = computePCAAxis(s);
+      const { cx, cy, longX: lx, longY: ly, perpX, perpY } = pca;
 
       // Place trees in a grid aligned to PCA axes
       const spacing = 6;
       const rng = mulberry32(seed ^ (r * 0xc3a5b7));
 
-      // Find range along each axis from region center
       const W = s.maxX - s.minX;
       const H = s.maxY - s.minY;
       const radius = Math.max(W, H) / 2 + spacing;
 
-      // Shadow pass first, then sprite pass (painter's algorithm)
-      interface OrchardTree { tx: number; ty: number; templateIdx: number; flipped: boolean }
       const trees: OrchardTree[] = [];
 
       for (let ai = -Math.ceil(radius / spacing); ai <= Math.ceil(radius / spacing); ai++) {
@@ -854,7 +833,7 @@ export class FarmRenderer {
               const ey = (dy - sh / 2) / (sh / 2);
               if (ex * ex + ey * ey > 1.0) continue;
               const idx = py * N + px;
-              pixels[idx] = _darkenPixel(pixels[idx], 0.55);
+              pixels[idx] = darkenPixel(pixels[idx], 0.55);
             }
           }
         }

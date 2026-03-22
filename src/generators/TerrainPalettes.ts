@@ -86,3 +86,11 @@ export function applyBrightness(rgb: number, factor: number): number {
   const b = Math.min(255, Math.floor((rgb & 0xff) * factor));
   return packABGR(r, g, b);
 }
+
+/** Darken an existing ABGR pixel by a factor (0–1). */
+export function darkenPixel(abgr: number, factor: number): number {
+  const r = Math.floor((abgr & 0xff) * factor);
+  const g = Math.floor(((abgr >> 8) & 0xff) * factor);
+  const b = Math.floor(((abgr >> 16) & 0xff) * factor);
+  return (255 << 24) | (b << 16) | (g << 8) | r;
+}

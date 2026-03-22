@@ -1,7 +1,7 @@
 import PoissonDiskSampling from 'fast-2d-poisson-disk-sampling';
 import { TopographyGenerator, mulberry32 } from './TopographyGenerator';
 import { HydrologyGenerator } from './HydrologyGenerator';
-import { packABGR } from './TerrainPalettes';
+import { packABGR, darkenPixel } from './TerrainPalettes';
 import { Season } from '../state/Season';
 
 // ---------------------------------------------------------------------------
@@ -875,12 +875,3 @@ export class TreeRenderer {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-function darkenPixel(abgr: number, factor: number): number {
-  const r = Math.floor((abgr & 0xff) * factor);
-  const g = Math.floor(((abgr >> 8) & 0xff) * factor);
-  const b = Math.floor(((abgr >> 16) & 0xff) * factor);
-  return (255 << 24) | (b << 16) | (g << 8) | r;
-}

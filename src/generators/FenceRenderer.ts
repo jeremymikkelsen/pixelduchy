@@ -1,15 +1,9 @@
 /**
- * FenceRenderer — post-and-rail fence following Voronoi cell polygon edges.
+ * FenceRenderer — post-and-rail fence following actual Voronoi cell edges.
  *
- * For each pasture region:
- *   - Walk the half-edge ring to enumerate Voronoi polygon edges
- *   - Skip any edge whose neighbour is also a pasture (shared border = no fence)
- *   - Draw a 3px-tall post at each exterior vertex
- *   - Draw a single-pixel rail at height 1 along each exterior edge (Bresenham)
- *
- * Fence pixels are clipped to source-space pixels that belong to the pasture
- * region or its immediate neighbour region, preventing lines from straying
- * outside the actual rendered tile boundary.
+ * Scans the regionGrid to find boundary pixels where a pasture pixel
+ * neighbors a non-pasture pixel. Draws fence posts and rails directly
+ * on those boundary pixels, perfectly matching the visual cell edges.
  *
  * All fence pixels are returned in `fencePixels` for per-frame restoration
  * after cow animation, so cows never permanently erase fence segments.
@@ -23,190 +17,82 @@ import type { AgImprovementType } from '../state/AgImprovements';
 const FENCE_POST = packABGR(0x4c, 0x32, 0x18);
 const FENCE_RAIL = packABGR(0x6e, 0x4c, 0x26);
 
-function triOfEdge(e: number)  { return Math.floor(e / 3); }
-function prevEdge(e: number)   { return (e % 3 === 0) ? e + 2 : e - 1; }
-
 export class FenceRenderer {
   render(
     pixels: Uint32Array,
     pastures: PastureData[],
-    topo: TopographyGenerator,
+    _topo: TopographyGenerator,
     improvements: Map<number, AgImprovementType>,
     ext: Int16Array | null,
     N: number,
     regionGrid: Uint16Array | null,
   ): { fencePixels: { idx: number; color: number }[] } {
     const fencePixels: { idx: number; color: number }[] = [];
-    const scale = topo.size / N;
-    const { mesh } = topo;
-    const { delaunay, triCenters } = mesh;
-    const halfedges = delaunay.halfedges;
-    const triangles = delaunay.triangles;
-    const numEdges  = mesh.numEdges;
+    if (!regionGrid) return { fencePixels };
 
+    // Build set of all pasture regions for shared-border detection
+    const pastureRegions = new Set<number>();
+    for (const pd of pastures) {
+      pastureRegions.add(pd.regionIndex);
+    }
+
+    // For each pasture, find boundary pixels and draw fence
     for (const pd of pastures) {
       const r = pd.regionIndex;
 
-      // Linear scan over all half-edges — avoids the ring-traversal break on hull edges.
-      // For each half-edge e whose source vertex is r, the Voronoi edge runs from
-      // the circumcenter of triOfEdge(e) to the circumcenter of triOfEdge(halfedges[prevEdge(e)]).
-      for (let e = 0; e < numEdges; e++) {
-        if (triangles[e] !== r) continue;
+      // Scan region bounding box for boundary pixels
+      const { minX, maxX, minY, maxY } = pd;
+      // Expand bounds by 1 to catch edge pixels
+      const x0 = Math.max(0, minX - 1);
+      const x1 = Math.min(N - 1, maxX + 1);
+      const y0 = Math.max(0, minY - 1);
+      const y1 = Math.min(N - 1, maxY + 1);
 
-        const fromTri  = triOfEdge(e);
-        const prev     = prevEdge(e);
-        const neighbor = triangles[prev];   // region across this Voronoi edge
-        const opp      = halfedges[prev];
+      // Use a seeded counter for post spacing
+      let boundaryCount = 0;
 
-        // Only draw fence on exterior edges (neighbour is not a pasture)
-        if (improvements.get(neighbor) === 'pasture') continue;
+      for (let py = y0; py <= y1; py++) {
+        for (let px = x0; px <= x1; px++) {
+          const idx = py * N + px;
+          if (regionGrid[idx] !== r) continue;
 
-        const x0 = Math.round(triCenters[fromTri].x / scale);
-        const y0 = Math.round(triCenters[fromTri].y / scale);
+          // Check if this pixel borders a non-pasture region
+          let isBoundary = false;
+          // Check 4-connected neighbors
+          if (px > 0     && regionGrid[idx - 1] !== r && !pastureRegions.has(regionGrid[idx - 1])) isBoundary = true;
+          if (px < N - 1 && regionGrid[idx + 1] !== r && !pastureRegions.has(regionGrid[idx + 1])) isBoundary = true;
+          if (py > 0     && regionGrid[idx - N] !== r && !pastureRegions.has(regionGrid[idx - N])) isBoundary = true;
+          if (py < N - 1 && regionGrid[idx + N] !== r && !pastureRegions.has(regionGrid[idx + N])) isBoundary = true;
 
-        if (opp === -1) {
-          // Hull edge — no circumcenter on the other side.
-          // Use the midpoint between the two region centers as the endpoint
-          // so the fence still closes along the hull boundary.
-          const pA = topo.mesh.points[r];
-          const pB = topo.mesh.points[neighbor];
-          const mx = Math.round(((pA.x + pB.x) / 2) / scale);
-          const my = Math.round(((pA.y + pB.y) / 2) / scale);
-          if (this._inBounds(x0, y0, N) || this._inBounds(mx, my, N)) {
-            this._post(pixels, x0, y0, N, ext, fencePixels, regionGrid, r, neighbor);
-            this._post(pixels, mx, my, N, ext, fencePixels, regionGrid, r, neighbor);
-            this._rail(pixels, x0, y0, mx, my, N, ext, fencePixels, regionGrid, r, neighbor);
+          if (!isBoundary) continue;
+
+          // Draw fence at this boundary pixel
+          const base = ext ? py - ext[idx] : py;
+
+          if (boundaryCount % 8 === 0) {
+            // Post — 3px tall
+            for (let h = 0; h < 3; h++) {
+              const sy = base - h;
+              if (sy >= 0 && sy < N) {
+                const si = sy * N + px;
+                fencePixels.push({ idx: si, color: FENCE_POST });
+                pixels[si] = FENCE_POST;
+              }
+            }
+          } else {
+            // Rail — 1px at height 1
+            const sy = base - 1;
+            if (sy >= 0 && sy < N) {
+              const si = sy * N + px;
+              fencePixels.push({ idx: si, color: FENCE_RAIL });
+              pixels[si] = FENCE_RAIL;
+            }
           }
-        } else {
-          const toTri = triOfEdge(opp);
-          const x1 = Math.round(triCenters[toTri].x  / scale);
-          const y1 = Math.round(triCenters[toTri].y  / scale);
-          if (this._inBounds(x0, y0, N) || this._inBounds(x1, y1, N)) {
-            this._post(pixels, x0, y0, N, ext, fencePixels, regionGrid, r, neighbor);
-            this._post(pixels, x1, y1, N, ext, fencePixels, regionGrid, r, neighbor);
-            this._rail(pixels, x0, y0, x1, y1, N, ext, fencePixels, regionGrid, r, neighbor);
-          }
+          boundaryCount++;
         }
       }
     }
 
     return { fencePixels };
-  }
-
-  // ── Helpers ────────────────────────────────────────────────────────────────
-
-  private _inBounds(px: number, py: number, N: number): boolean {
-    return px >= 0 && px < N && py >= 0 && py < N;
-  }
-
-  /** 3-pixel tall post at source position (px, py), growing upward. */
-  private _post(
-    pixels: Uint32Array,
-    px: number, py: number,
-    N: number, ext: Int16Array | null,
-    cap: { idx: number; color: number }[],
-    regionGrid: Uint16Array | null,
-    r1: number, _r2: number,
-  ): void {
-    const cx = Math.max(0, Math.min(N - 1, px));
-    const cy = Math.max(0, Math.min(N - 1, py));
-
-    // Clip: draw on pixels near the pasture boundary.
-    // Allow pasture's own region + immediate neighbor, but also allow
-    // pixels within 2px of a pasture pixel (for coastal/water edges).
-    if (regionGrid) {
-      const pr = regionGrid[cy * N + cx];
-      if (pr !== r1 && pr !== _r2) {
-        // Check if any adjacent pixel belongs to the pasture
-        let nearPasture = false;
-        for (let dy = -2; dy <= 2 && !nearPasture; dy++) {
-          for (let dx = -2; dx <= 2 && !nearPasture; dx++) {
-            const nx = cx + dx, ny = cy + dy;
-            if (nx >= 0 && nx < N && ny >= 0 && ny < N && regionGrid[ny * N + nx] === r1) {
-              nearPasture = true;
-            }
-          }
-        }
-        if (!nearPasture) return;
-      }
-    }
-
-    const base = this._sBase(cy * N + cx, cy, ext);
-    for (let h = 0; h < 3; h++) {
-      const sy = base - h;
-      if (sy < 0 || sy >= N) continue;
-      const si = sy * N + cx;
-      cap.push({ idx: si, color: FENCE_POST });
-      pixels[si] = FENCE_POST;
-    }
-  }
-
-  /** Bresenham line; rail + intermediate posts every POST_INTERVAL steps. */
-  private _rail(
-    pixels: Uint32Array,
-    x0: number, y0: number, x1: number, y1: number,
-    N: number, ext: Int16Array | null,
-    cap: { idx: number; color: number }[],
-    regionGrid: Uint16Array | null,
-    r1: number, r2: number,
-  ): void {
-    let cx = Math.round(x0), cy = Math.round(y0);
-    const ex = Math.round(x1), ey = Math.round(y1);
-    const dx = Math.abs(ex - cx), dy = Math.abs(ey - cy);
-    const sx = cx < ex ? 1 : -1;
-    const sy = cy < ey ? 1 : -1;
-    let err = dx - dy;
-    let step = 0;
-    const POST_INTERVAL = 8;  // intermediate post every 8 Bresenham steps
-
-    for (;;) {
-      if (cx >= 0 && cx < N && cy >= 0 && cy < N) {
-        // Draw on pixels near the pasture boundary
-        const srcIdx = cy * N + cx;
-        const pr = regionGrid ? regionGrid[srcIdx] : r1;
-        let inRegion = (pr === r1 || pr === r2);
-        // For water/coast edges, allow drawing near the pasture boundary
-        if (!inRegion && regionGrid) {
-          for (let ady = -2; ady <= 2 && !inRegion; ady++) {
-            for (let adx = -2; adx <= 2 && !inRegion; adx++) {
-              const nx = cx + adx, ny = cy + ady;
-              if (nx >= 0 && nx < N && ny >= 0 && ny < N && regionGrid[ny * N + nx] === r1) {
-                inRegion = true;
-              }
-            }
-          }
-        }
-        if (inRegion) {
-          const base = this._sBase(srcIdx, cy, ext);
-          if (step > 0 && step % POST_INTERVAL === 0) {
-            // Intermediate post — 3px tall, sitting on rail height
-            for (let h = 0; h < 3; h++) {
-              const psy = base - h;
-              if (psy >= 0 && psy < N) {
-                const pi = psy * N + cx;
-                cap.push({ idx: pi, color: FENCE_POST });
-                pixels[pi] = FENCE_POST;
-              }
-            }
-          } else {
-            const screenY = base - 1;
-            if (screenY >= 0 && screenY < N) {
-              const si = screenY * N + cx;
-              cap.push({ idx: si, color: FENCE_RAIL });
-              pixels[si] = FENCE_RAIL;
-            }
-          }
-        }
-      }
-      if (cx === ex && cy === ey) break;
-      const e2 = 2 * err;
-      if (e2 > -dy) { err -= dy; cx += sx; }
-      if (e2 <  dx) { err += dx; cy += sy; }
-      step++;
-    }
-  }
-
-  private _sBase(srcIdx: number, py: number, ext: Int16Array | null): number {
-    return ext ? py - ext[srcIdx] : py;
   }
 }

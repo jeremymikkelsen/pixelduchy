@@ -1022,26 +1022,6 @@ export class MapScene extends Phaser.Scene {
       treeMask = treeResult.treeMask;
     });
 
-    // Orchard trees — stamp sprite-based apple trees in neat rows
-    _mark('orchard_trees', () => {
-      if (this._state.agImprovements && renderer.regionGrid) {
-        farmRenderer.renderOrchardTrees(
-          pixels, PIXEL_RESOLUTION, this._state.agImprovements,
-          renderer.regionGrid, seed, season,
-        );
-      }
-    });
-
-    // Winter haystacks in grain fields
-    if (season === Season.Winter && this._state.agImprovements && renderer.regionGrid) {
-      _mark('haystacks', () => {
-        farmRenderer.renderWinterHaystacks(
-          pixels, PIXEL_RESOLUTION, this._state.agImprovements,
-          renderer.regionGrid!, seed,
-        );
-      });
-    }
-
     // 4. Now mark targets as removed for next season
     for (const key of targetKeys) this._state.removedTrees.add(key);
 
@@ -1074,6 +1054,26 @@ export class MapScene extends Phaser.Scene {
       this._fencePixels = fc.fencePixels;
     } else {
       this._fencePixels = [];
+    }
+
+    // Orchard trees — stamp after mountain extrusion so they aren't overwritten
+    _mark('orchard_trees', () => {
+      if (this._state.agImprovements && renderer.regionGrid) {
+        farmRenderer.renderOrchardTrees(
+          pixels, PIXEL_RESOLUTION, this._state.agImprovements,
+          renderer.regionGrid, seed, season,
+        );
+      }
+    });
+
+    // Winter haystacks in grain fields
+    if (season === Season.Winter && this._state.agImprovements && renderer.regionGrid) {
+      _mark('haystacks', () => {
+        farmRenderer.renderWinterHaystacks(
+          pixels, PIXEL_RESOLUTION, this._state.agImprovements,
+          renderer.regionGrid!, seed,
+        );
+      });
     }
 
     // River animator (buildingMask set after renderSprites below)

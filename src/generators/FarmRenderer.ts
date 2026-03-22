@@ -921,20 +921,16 @@ export class FarmRenderer {
           const lightDot = relX * ORCHARD_LIGHT_X + relY * ORCHARD_LIGHT_Y;
           let shadeIdx = Math.max(0, Math.min(4, Math.floor((lightDot + 1) / 2 * 4.99)));
 
-          // Fall: red apples on ~50% of trees, clustered on lit side
-          if (season === Season.Fall && shadeIdx >= 3) {
-            // Per-tree hash: only some trees bear fruit
-            const treeHash = mulberry32((tx * 3571 + ty * 7919) ^ seed ^ 0xf4a11)();
-            if (treeHash < 0.50) {
-              const appleHash = mulberry32((px * 7919 + py * 104729) ^ seed ^ 0xa991e)();
-              if (appleHash < 0.12) {
-                color = palette.apple!;
-                const r = (color >> 16) & 0xff;
-                const g = (color >> 8) & 0xff;
-                const b = color & 0xff;
-                pixels[py * N + px] = packABGR(r, g, b);
-                continue;
-              }
+          // Fall: single-pixel red apples on every tree, evenly distributed
+          if (season === Season.Fall && shadeIdx >= 2) {
+            const appleHash = mulberry32((px * 7919 + py * 104729) ^ seed ^ 0xa991e)();
+            if (appleHash < 0.10) {
+              color = palette.apple!;
+              const r = (color >> 16) & 0xff;
+              const g = (color >> 8) & 0xff;
+              const b = color & 0xff;
+              pixels[py * N + px] = packABGR(r, g, b);
+              continue;
             }
           }
 

@@ -171,6 +171,14 @@ const ORCHARD_BARE_TEMPLATES: { w: number; h: number; data: number[] }[] = [
   ]},
 ];
 
+// ── Haystack sprites for winter grain fields (3×3 golden mound) ───────────────
+const HAYSTACK_TEMPLATE = { w: 3, h: 3, data: [
+  0, 1, 0,
+  1, 1, 1,
+  1, 1, 1,
+]};
+const HAYSTACK_COLORS = [0xb09838, 0x988030, 0xc0a840]; // golden straw shades
+
 // Lighting direction (matches TreeRenderer)
 const ORCHARD_LIGHT_X = -0.707;
 const ORCHARD_LIGHT_Y = -0.707;
@@ -185,25 +193,28 @@ interface OrchardPalette {
 function getOrchardPalette(season: Season, _seed: number): OrchardPalette {
   switch (season) {
     case Season.Spring:
+      // Bright spring green — blossoms handled separately in stamp
       return {
-        canopy: [0x2a6028, 0x3a7c38, 0x4c9848, 0x60b058, 0x78c868],
+        canopy: [0x308030, 0x48a040, 0x58b850, 0x70cc60, 0x88e070],
         trunk: [0x8a7860, 0x5a4a38],
       };
     case Season.Summer:
+      // Vivid bright green
       return {
-        canopy: [0x1f4a22, 0x2d6630, 0x3a8040, 0x50a048, 0x68b850],
+        canopy: [0x2a6828, 0x3a8838, 0x4ca848, 0x60c058, 0x78d868],
         trunk: [0x8a7860, 0x5a4a38],
       };
     case Season.Fall:
+      // Golden yellow foliage with red apples
       return {
-        canopy: [0x8a3818, 0xa04820, 0xb86028, 0xcc7830, 0xe09038],
+        canopy: [0x987818, 0xb09020, 0xc8a828, 0xd8b830, 0xe8cc40],
         trunk: [0x8a7860, 0x5a4a38],
         apple: 0xcc2222,
       };
     case Season.Winter:
       return {
         canopy: [0x2a2018, 0x3a2c20, 0x483828, 0x584830, 0x685838],
-        trunk: [0x5a4a38, 0x3a2c20],
+        trunk: [0x6a5840, 0x4a3828],
       };
   }
 }
@@ -444,16 +455,24 @@ export class FarmRenderer {
     const fallColors = CROP_FALL_COLORS[cropStyle] ?? CROP_FALL_COLORS.wheat;
     const summerColors = CROP_SUMMER_COLORS[cropStyle] ?? CROP_SUMMER_COLORS.wheat;
 
-    // ── Winter: bare brown soil + snow patches + dark stubble ──
+    // ── Winter: visible furrow rows with snow dusting + stubble ──
     if (season === Season.Winter) {
+      const row = ((Math.floor(perp) % 4) + 4) % 4;
       const n1 = noise(px * 0.06, py * 0.06);
       const n2 = noise(px * 0.18 + 50, py * 0.18 + 50);
-      if (n1 > 0.25) {
-        return applyBrightness(n1 > 0.5 ? 0xdce4ec : 0xc4d0dc, 0.95 + n2 * 0.08);
+      // Snow patches — less coverage than surrounding terrain so field is distinct
+      if (n1 > 0.45) {
+        return applyBrightness(n1 > 0.65 ? 0xd8e0e8 : 0xc0ccd8, 0.95 + n2 * 0.08);
       }
-      if (n2 > 0.65) {
-        return applyBrightness(0x30201a, 1.0);
+      // Dark stubble in furrow rows
+      if (row === 0) {
+        return applyBrightness(0x3a2818, 1.0);  // dark furrow
       }
+      // Stubble rows — tan/straw color
+      if (row === 2 && n2 > -0.2) {
+        return applyBrightness(n2 > 0.3 ? 0x8a7838 : 0x786830, 1.0);  // straw stubble
+      }
+      // Brown soil base
       return applyBrightness(n2 > 0 ? 0x685040 : 0x584030, 1.0);
     }
 
@@ -525,16 +544,22 @@ export class FarmRenderer {
     const cropType = crops[stripIdx];
     const soil = VEGGIE_SOIL[season];
 
-    // ── Winter: snow mounds + bare stems ────────────────────────────────────
+    // ── Winter: mostly tilled dirt with snow patches + bare stems ──────────
     if (season === Season.Winter) {
       const snowN = noise(px * 0.28 + 100, py * 0.28);
-      if (snowN > 0.20) {
+      // Snow patches — only ~30% coverage so dirt shows through
+      if (snowN > 0.45) {
         const sn2 = noise(px * 0.55 + 200, py * 0.55);
-        return applyBrightness(sn2 > 0 ? 0xdce8f0 : 0xc8d8e8, 1.0);
+        return applyBrightness(sn2 > 0 ? 0xd0dce4 : 0xc0ccd8, 1.0);
       }
-      // Rare bare stem pixel
-      if (noise(px * 0.9 + 50, py * 0.9 + 50) > 0.82) {
+      // Bare stems — more frequent
+      if (noise(px * 0.9 + 50, py * 0.9 + 50) > 0.72) {
         return applyBrightness(0x3c2a18, 1.0);
+      }
+      // Dark tilled soil — visible dirt rows
+      const dirtN = noise(px * 0.4 + cropType * 3, py * 0.4);
+      if (dirtN > 0.2) {
+        return applyBrightness(0x4a3820, 1.0);  // darker dirt patch
       }
       return soil;
     }
@@ -611,9 +636,13 @@ export class FarmRenderer {
     const n = noise(px * 0.15, py * 0.15);
     switch (season) {
       case Season.Winter: {
+        // Less snow coverage than surroundings so orchard remains visible
         const snowN = noise(px * 0.08, py * 0.08);
-        if (snowN > 0.2) return applyBrightness(snowN > 0.5 ? 0xdce4ec : 0xc4d0dc, 0.95);
-        return applyBrightness(n > 0 ? 0x685040 : 0x584030, 1.0);
+        if (snowN > 0.5) return applyBrightness(snowN > 0.7 ? 0xd8e0e8 : 0xc4d0dc, 0.95);
+        // Frosty brown ground with dead grass
+        const grassN = noise(px * 0.3 + 10, py * 0.3 + 10);
+        if (grassN > 0.3) return applyBrightness(0x6a6040, 1.0);  // dead yellow grass
+        return applyBrightness(n > 0 ? 0x605038 : 0x504028, 1.0);
       }
       case Season.Spring:
         return applyBrightness(n > 0 ? 0x5c9838 : 0x4a8828, 1.0);
@@ -621,6 +650,70 @@ export class FarmRenderer {
         return applyBrightness(n > 0 ? 0x4a8828 : 0x3c7820, 1.0);
       case Season.Fall:
         return applyBrightness(n > 0 ? 0x6a7828 : 0x586828, 1.0);
+    }
+  }
+
+  // ── Winter field haystacks — stamp small golden mounds in grain fields ───────
+
+  renderWinterHaystacks(
+    pixels: Uint32Array,
+    N: number,
+    improvements: Map<number, AgImprovementType>,
+    regionGrid: Uint16Array,
+    seed: number,
+  ): void {
+    // Collect grain region bounding boxes
+    for (const [r, type] of improvements) {
+      if (type !== 'grain') continue;
+      const rng = mulberry32(seed ^ (r * 0xd7a3b1));
+
+      // Find region bounds
+      let minX = N, maxX = 0, minY = N, maxY = 0;
+      const regionPixels = new Set<number>();
+      for (let i = 0; i < N * N; i++) {
+        if (regionGrid[i] !== r) continue;
+        const px = i % N;
+        const py = (i - px) / N;
+        if (px < minX) minX = px;
+        if (px > maxX) maxX = px;
+        if (py < minY) minY = py;
+        if (py > maxY) maxY = py;
+        regionPixels.add(i);
+      }
+
+      const W = maxX - minX;
+      const H = maxY - minY;
+      if (W < 8 || H < 8) continue;
+
+      // Place 2-4 haystacks per grain region
+      const count = 2 + Math.floor(rng() * 3);
+      for (let k = 0; k < count; k++) {
+        const hx = Math.round(minX + (0.15 + rng() * 0.70) * W);
+        const hy = Math.round(minY + (0.15 + rng() * 0.70) * H);
+
+        // Check center is inside region
+        if (!regionPixels.has(hy * N + hx)) continue;
+
+        // Stamp haystack
+        const tmpl = HAYSTACK_TEMPLATE;
+        const sx = hx - Math.floor(tmpl.w / 2);
+        const sy = hy - tmpl.h + 1;
+        for (let row = 0; row < tmpl.h; row++) {
+          for (let col = 0; col < tmpl.w; col++) {
+            if (tmpl.data[row * tmpl.w + col] === 0) continue;
+            const px = sx + col;
+            const py = sy + row;
+            if (px < 0 || px >= N || py < 0 || py >= N) continue;
+            const shade = (col + row) & 1;
+            const colorIdx = row === 0 ? 2 : shade; // top is highlight
+            const c = HAYSTACK_COLORS[colorIdx];
+            const cr = (c >> 16) & 0xff;
+            const cg = (c >> 8) & 0xff;
+            const cb = c & 0xff;
+            pixels[py * N + px] = packABGR(cr, cg, cb);
+          }
+        }
+      }
     }
   }
 
@@ -839,11 +932,11 @@ export class FarmRenderer {
             }
           }
 
-          // Spring: scatter blossom pixels
-          if (season === Season.Spring && shadeIdx >= 3) {
+          // Spring: scatter blossom pixels — heavy pink/white
+          if (season === Season.Spring && shadeIdx >= 2) {
             const blossomHash = mulberry32((px * 7919 + py * 104729) ^ seed ^ 0xb10550)();
-            if (blossomHash < 0.30) {
-              color = blossomHash < 0.15 ? 0xf0c0d0 : 0xe8d8e0;
+            if (blossomHash < 0.50) {
+              color = blossomHash < 0.20 ? 0xf8d0e0 : blossomHash < 0.35 ? 0xf0a8c0 : 0xe8d8e8;
               const r = (color >> 16) & 0xff;
               const g = (color >> 8) & 0xff;
               const b = color & 0xff;

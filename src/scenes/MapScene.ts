@@ -29,6 +29,7 @@ import { SmelterRenderer } from '../generators/SmelterRenderer';
 import { SmelterAnimator } from '../generators/SmelterAnimator';
 import { PlacedBuildingRenderer } from '../generators/PlacedBuildingRenderer';
 import { packABGR } from '../generators/TerrainPalettes';
+import { Season } from '../state/Season';
 
 const MAP_SIZE = 3072;
 const PIXEL_RESOLUTION = 1536;
@@ -1031,6 +1032,16 @@ export class MapScene extends Phaser.Scene {
       }
     });
 
+    // Winter haystacks in grain fields
+    if (season === Season.Winter && this._state.agImprovements && renderer.regionGrid) {
+      _mark('haystacks', () => {
+        farmRenderer.renderWinterHaystacks(
+          pixels, PIXEL_RESOLUTION, this._state.agImprovements,
+          renderer.regionGrid!, seed,
+        );
+      });
+    }
+
     // 4. Now mark targets as removed for next season
     for (const key of targetKeys) this._state.removedTrees.add(key);
 
@@ -1072,10 +1083,13 @@ export class MapScene extends Phaser.Scene {
     // Coastal animation
     coastalRenderer.extrusionMap = mountainRenderer.extrusionMap;
 
-    // Structures (3/4 perspective with ground shadows)
+    // Structures (3/4 perspective with ground shadows) — includes player-placed buildings
+    const allStructures = this._state.playerStructures.length > 0
+      ? [...structures, ...this._state.playerStructures]
+      : structures;
     let buildingMask!: Uint8Array;
     _mark('structures_render', () => {
-      buildingMask = structureRenderer.renderSprites(pixels, PIXEL_RESOLUTION, structures, season, this._manorSprites.length > 0 ? this._manorSprites : undefined);
+      buildingMask = structureRenderer.renderSprites(pixels, PIXEL_RESOLUTION, allStructures, season, this._manorSprites.length > 0 ? this._manorSprites : undefined);
     });
 
     // Merge woodcutter BUILDING mask (tight, actual pixels only) so rivers

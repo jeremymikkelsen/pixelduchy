@@ -111,11 +111,24 @@ export class FenceRenderer {
     const cx = Math.max(0, Math.min(N - 1, px));
     const cy = Math.max(0, Math.min(N - 1, py));
 
-    // Clip: draw on pixels that belong to the pasture or its neighbour,
-    // so fence sits right on the Voronoi edge boundary.
+    // Clip: draw on pixels near the pasture boundary.
+    // Allow pasture's own region + immediate neighbor, but also allow
+    // pixels within 2px of a pasture pixel (for coastal/water edges).
     if (regionGrid) {
       const pr = regionGrid[cy * N + cx];
-      if (pr !== r1 && pr !== _r2) return;
+      if (pr !== r1 && pr !== _r2) {
+        // Check if any adjacent pixel belongs to the pasture
+        let nearPasture = false;
+        for (let dy = -2; dy <= 2 && !nearPasture; dy++) {
+          for (let dx = -2; dx <= 2 && !nearPasture; dx++) {
+            const nx = cx + dx, ny = cy + dy;
+            if (nx >= 0 && nx < N && ny >= 0 && ny < N && regionGrid[ny * N + nx] === r1) {
+              nearPasture = true;
+            }
+          }
+        }
+        if (!nearPasture) return;
+      }
     }
 
     const base = this._sBase(cy * N + cx, cy, ext);
@@ -148,11 +161,21 @@ export class FenceRenderer {
 
     for (;;) {
       if (cx >= 0 && cx < N && cy >= 0 && cy < N) {
-        // Draw on pixels that belong to the pasture or its neighbour,
-        // so fence sits right on the Voronoi edge boundary.
+        // Draw on pixels near the pasture boundary
         const srcIdx = cy * N + cx;
         const pr = regionGrid ? regionGrid[srcIdx] : r1;
-        const inRegion = (pr === r1 || pr === r2);
+        let inRegion = (pr === r1 || pr === r2);
+        // For water/coast edges, allow drawing near the pasture boundary
+        if (!inRegion && regionGrid) {
+          for (let ady = -2; ady <= 2 && !inRegion; ady++) {
+            for (let adx = -2; adx <= 2 && !inRegion; adx++) {
+              const nx = cx + adx, ny = cy + ady;
+              if (nx >= 0 && nx < N && ny >= 0 && ny < N && regionGrid[ny * N + nx] === r1) {
+                inRegion = true;
+              }
+            }
+          }
+        }
         if (inRegion) {
           const base = this._sBase(srcIdx, cy, ext);
           if (step > 0 && step % POST_INTERVAL === 0) {

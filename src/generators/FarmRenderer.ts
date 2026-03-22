@@ -214,7 +214,7 @@ function getOrchardPalette(season: Season, _seed: number): OrchardPalette {
     case Season.Winter:
       return {
         canopy: [0x2a2018, 0x3a2c20, 0x483828, 0x584830, 0x685838],
-        trunk: [0x6a5840, 0x4a3828],
+        trunk: [0x7a6848, 0x584030],
       };
   }
 }
@@ -636,13 +636,15 @@ export class FarmRenderer {
     const n = noise(px * 0.15, py * 0.15);
     switch (season) {
       case Season.Winter: {
-        // Less snow coverage than surroundings so orchard remains visible
-        const snowN = noise(px * 0.08, py * 0.08);
-        if (snowN > 0.5) return applyBrightness(snowN > 0.7 ? 0xd8e0e8 : 0xc4d0dc, 0.95);
-        // Frosty brown ground with dead grass
+        // Mostly bare earth with frost — clearly distinct from snowy surroundings
+        const frostN = noise(px * 0.12, py * 0.12);
+        // Only thin frost patches (~20%)
+        if (frostN > 0.65) return applyBrightness(0xb8c0c8, 0.95);
+        // Dead grass tufts
         const grassN = noise(px * 0.3 + 10, py * 0.3 + 10);
-        if (grassN > 0.3) return applyBrightness(0x6a6040, 1.0);  // dead yellow grass
-        return applyBrightness(n > 0 ? 0x605038 : 0x504028, 1.0);
+        if (grassN > 0.4) return applyBrightness(0x686038, 1.0);  // dead yellow-brown grass
+        // Dark frozen earth
+        return applyBrightness(n > 0 ? 0x4a4030 : 0x3c3428, 1.0);
       }
       case Season.Spring:
         return applyBrightness(n > 0 ? 0x5c9838 : 0x4a8828, 1.0);
@@ -919,16 +921,20 @@ export class FarmRenderer {
           const lightDot = relX * ORCHARD_LIGHT_X + relY * ORCHARD_LIGHT_Y;
           let shadeIdx = Math.max(0, Math.min(4, Math.floor((lightDot + 1) / 2 * 4.99)));
 
-          // Fall: scatter red apple pixels over canopy highlights
-          if (season === Season.Fall && shadeIdx >= 2) {
-            const appleHash = mulberry32((px * 7919 + py * 104729) ^ seed ^ 0xa991e)();
-            if (appleHash < 0.18) {
-              color = palette.apple!;
-              const r = (color >> 16) & 0xff;
-              const g = (color >> 8) & 0xff;
-              const b = color & 0xff;
-              pixels[py * N + px] = packABGR(r, g, b);
-              continue;
+          // Fall: red apples on ~50% of trees, clustered on lit side
+          if (season === Season.Fall && shadeIdx >= 3) {
+            // Per-tree hash: only some trees bear fruit
+            const treeHash = mulberry32((tx * 3571 + ty * 7919) ^ seed ^ 0xf4a11)();
+            if (treeHash < 0.50) {
+              const appleHash = mulberry32((px * 7919 + py * 104729) ^ seed ^ 0xa991e)();
+              if (appleHash < 0.12) {
+                color = palette.apple!;
+                const r = (color >> 16) & 0xff;
+                const g = (color >> 8) & 0xff;
+                const b = color & 0xff;
+                pixels[py * N + px] = packABGR(r, g, b);
+                continue;
+              }
             }
           }
 

@@ -917,6 +917,70 @@ html, body, #root {
 .fp-order-btn:hover:not(:disabled) { background: rgba(255,255,255,0.18); }
 .fp-order-btn:disabled { opacity: 0.25; cursor: default; }
 
+.fp-section-header {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #c9a227;
+  border-bottom: 1px solid rgba(255,255,255,0.15);
+  padding: 0.5rem 0 0.25rem;
+  margin-top: 0.75rem;
+}
+
+.fp-pipeline-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0;
+  font-size: 0.85rem;
+}
+
+.fp-pipeline-row .fp-slider {
+  flex: 1;
+  min-width: 80px;
+}
+
+.fp-pipeline-row .fp-slider:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.fp-pipeline-label {
+  min-width: 70px;
+  white-space: nowrap;
+}
+
+.fp-pipeline-value {
+  min-width: 90px;
+  text-align: right;
+  font-size: 0.8rem;
+  color: #a0a0a0;
+}
+
+.fp-labor-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+}
+
+.fp-labor-row .fp-slider {
+  flex: 1;
+}
+
+.fp-labor-label {
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.fp-labor-counts {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: #a0a0a0;
+  padding-bottom: 0.5rem;
+}
+
 /* ─── Population panel ───────────────────────────────────────────────────── */
 .fp-pop-total    { font-size: 1.4rem; font-weight: 700; margin: 0.5rem 0 0.75rem; }
 .fp-pop-happiness { margin-bottom: 0.75rem; }

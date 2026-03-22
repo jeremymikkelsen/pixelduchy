@@ -335,11 +335,29 @@ function _tryGenerate(
       if (regionToDuchy[r] === d) regions.push(r);
     }
 
+    // Capital must not sit on a river — find nearest non-river region if needed
+    let capital = seeds[d];
+    if (hasRiver[capital]) {
+      const seedPt = mesh.points[capital];
+      let bestR = -1;
+      let bestDist = Infinity;
+      for (const r of regions) {
+        if (hasRiver[r]) continue;
+        const p = mesh.points[r];
+        const d2 = (p.x - seedPt.x) ** 2 + (p.y - seedPt.y) ** 2;
+        if (d2 < bestDist) {
+          bestDist = d2;
+          bestR = r;
+        }
+      }
+      if (bestR >= 0) capital = bestR;
+    }
+
     duchies.push({
       id: d,
       house: HOUSES[d],
       regions,
-      capitalRegion: seeds[d],
+      capitalRegion: capital,
       hasRiver: !!duchyHasRiver[d],
       hasForest: !!duchyHasForest[d],
     });

@@ -219,16 +219,12 @@ export function FoodPanel() {
 
         {/* 1. Labor Slider */}
         <div className="fp-labor-row">
-          <span className="fp-labor-label">🌾 Food Industry</span>
+          <span className="fp-labor-label">🌾 Food Industry ({Math.round(population.total * (100 - foodProcessing.foodLaborRatio) / 100)})</span>
           <input type="range" className="fp-slider" min={0} max={100}
             value={foodProcessing.foodLaborRatio}
             onChange={e => setFoodProcessing({ foodLaborRatio: Number(e.target.value) })}
           />
-          <span className="fp-labor-label">⛏️ Resource Industry</span>
-        </div>
-        <div className="fp-labor-counts">
-          <span>{Math.round(population.total * (100 - foodProcessing.foodLaborRatio) / 100)} food</span>
-          <span>{Math.round(population.total * foodProcessing.foodLaborRatio / 100)} resource</span>
+          <span className="fp-labor-label">⛏️ Resource Industry ({Math.round(population.total * foodProcessing.foodLaborRatio / 100)})</span>
         </div>
 
         {/* 2. Rations */}
@@ -250,7 +246,9 @@ export function FoodPanel() {
             })}
           </div>
           <span className="fp-ration-hint">
-            {totalEat > 0 ? `${totalEat} consumed` : 'No food distributed'} · happiness {happinessDelta >= 0 ? '+' : ''}{happinessDelta}/turn
+            {totalEat > 0 ? <>{`-${totalEat}`} 🍖</> : null}
+            {' '}
+            {happinessDelta !== 0 ? <>{happinessDelta > 0 ? '+' : ''}{happinessDelta} ❤️</> : null}
           </span>
         </div>
 

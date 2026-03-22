@@ -697,7 +697,7 @@ export class FarmRenderer {
       const perpX = -ly, perpY = lx;
 
       // Place trees in a grid aligned to PCA axes
-      const spacing = 8;
+      const spacing = 6;
       const rng = mulberry32(seed ^ (r * 0xc3a5b7));
 
       // Find range along each axis from region center
@@ -718,10 +718,10 @@ export class FarmRenderer {
           if (tx < 0 || tx >= N || ty < 0 || ty >= N) continue;
           if (!s.pixels.has(ty * N + tx)) continue;
 
-          // Small margin from boundary: check 2px around trunk base
+          // Small margin from boundary: check 1px around trunk base
           let tooClose = false;
-          for (let dy = -2; dy <= 2 && !tooClose; dy++) {
-            for (let dx = -2; dx <= 2 && !tooClose; dx++) {
+          for (let dy = -1; dy <= 1 && !tooClose; dy++) {
+            for (let dx = -1; dx <= 1 && !tooClose; dx++) {
               const nx = tx + dx, ny = ty + dy;
               if (nx < 0 || nx >= N || ny < 0 || ny >= N) { tooClose = true; break; }
               if (!s.pixels.has(ny * N + nx)) tooClose = true;
@@ -741,37 +741,31 @@ export class FarmRenderer {
       trees.sort((a, b) => a.ty - b.ty);
 
       const palette = getOrchardPalette(season, seed);
-      const bareTemplates = season === Season.Winter;
 
       // Shadow pass
-      if (!bareTemplates) {
-        for (const tree of trees) {
-          const tmpl = ORCHARD_TEMPLATES[tree.templateIdx];
-          const sw = Math.ceil(tmpl.w * 0.7);
-          const sh = Math.max(1, Math.ceil(tmpl.h * 0.25));
-          const sx = tree.tx + 1 - Math.floor(sw / 2);
-          const sy = tree.ty;
-          for (let dy = 0; dy < sh; dy++) {
-            for (let dx = 0; dx < sw; dx++) {
-              const px = sx + dx;
-              const py = sy + dy;
-              if (px < 0 || px >= N || py < 0 || py >= N) continue;
-              const ex = (dx - sw / 2) / (sw / 2);
-              const ey = (dy - sh / 2) / (sh / 2);
-              if (ex * ex + ey * ey > 1.0) continue;
-              const idx = py * N + px;
-              pixels[idx] = _darkenPixel(pixels[idx], 0.55);
-            }
+      for (const tree of trees) {
+        const tmpl = ORCHARD_TEMPLATES[tree.templateIdx];
+        const sw = Math.ceil(tmpl.w * 0.7);
+        const sh = Math.max(1, Math.ceil(tmpl.h * 0.25));
+        const sx = tree.tx + 1 - Math.floor(sw / 2);
+        const sy = tree.ty;
+        for (let dy = 0; dy < sh; dy++) {
+          for (let dx = 0; dx < sw; dx++) {
+            const px = sx + dx;
+            const py = sy + dy;
+            if (px < 0 || px >= N || py < 0 || py >= N) continue;
+            const ex = (dx - sw / 2) / (sw / 2);
+            const ey = (dy - sh / 2) / (sh / 2);
+            if (ex * ex + ey * ey > 1.0) continue;
+            const idx = py * N + px;
+            pixels[idx] = _darkenPixel(pixels[idx], 0.55);
           }
         }
       }
 
-      // Sprite pass
+      // Sprite pass — always use leafed templates, winter palette handles the muted look
       for (const tree of trees) {
-        const tmpl = bareTemplates
-          ? ORCHARD_BARE_TEMPLATES[tree.templateIdx % ORCHARD_BARE_TEMPLATES.length]
-          : ORCHARD_TEMPLATES[tree.templateIdx];
-
+        const tmpl = ORCHARD_TEMPLATES[tree.templateIdx];
         this._stampOrchardTree(pixels, N, tree.tx, tree.ty, tmpl, palette, tree.flipped, season, seed);
       }
     }

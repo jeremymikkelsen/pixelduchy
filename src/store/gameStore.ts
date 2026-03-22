@@ -9,7 +9,7 @@ import { placeBuilding as placeBuildingInState } from '../state/GameState';
 import type { Duchy, HouseData } from '../state/Duchy';
 import type { Season } from '../state/Season';
 import type { KingData } from '../state/King';
-import type { DuchyEconomy, RationLevel, DevelopmentMode, ResourceType, LaborAssignment } from '../state/Economy';
+import type { DuchyEconomy, RationLevel, DevelopmentMode, ResourceType, LaborAssignment, FoodProcessing } from '../state/Economy';
 import { saveGame as persistSave, loadGame as loadSave, hasSavedGame, deleteSave, type SaveData } from '../state/SaveLoad';
 import type { BuildingType } from '../state/Building';
 import type { AgImprovementType } from '../state/AgImprovements';
@@ -26,6 +26,7 @@ export interface GameStoreState {
   season: Season | null;
   year: number;
   zoom: number;
+  cpuPct: number;  // update() CPU usage as % of 16.7ms budget
   king: KingData | null;
 
   // Save state
@@ -58,6 +59,7 @@ export interface GameStoreState {
   setTaxRate: (rate: number) => void;
   setLaborAllocation: (role: keyof Omit<LaborAssignment, 'unemployed'>, value: number) => void;
   setFoodEatOrder: (order: ResourceType[]) => void;
+  setFoodProcessing: (updates: Partial<FoodProcessing>) => void;
 
   // Building placement
   placeBuilding: (region: number, buildingType: BuildingType, hasRiver: boolean, hasForest: boolean) => boolean;
@@ -72,6 +74,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
   season: null,
   year: 1,
   zoom: 1,
+  cpuPct: 0,
   king: null,
   hasSave: hasSavedGame(),
   onEndTurn: null,
@@ -222,6 +225,14 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
     if (!gameState) return;
     gameState.economies[gameState.playerDuchy].foodEatOrder = order;
     set({ playerEconomy: { ...gameState.economies[gameState.playerDuchy] } });
+  },
+
+  setFoodProcessing: (updates) => {
+    const { gameState } = get();
+    if (!gameState) return;
+    const eco = gameState.economies[gameState.playerDuchy];
+    eco.foodProcessing = { ...eco.foodProcessing, ...updates };
+    set({ playerEconomy: { ...eco } });
   },
 
   placeBuilding: (region, buildingType, hasRiver, hasForest) => {

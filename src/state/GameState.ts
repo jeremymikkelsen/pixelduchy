@@ -9,7 +9,7 @@ import { Season, nextSeason } from './Season';
 import { Duchy } from './Duchy';
 import { generateDuchies } from './DuchyGenerator';
 import { generateRoads, RoadSegment } from '../generators/RoadGenerator';
-import { DuchyEconomy, createDuchyEconomy, processEconomyTurn, countTerrain } from './Economy';
+import { DuchyEconomy, createDuchyEconomy, processEconomyTurn, countTerrain, type ProcessingCapacity } from './Economy';
 import { getStartingFavor } from './HouseBonus';
 import type { SaveData } from './SaveLoad';
 import { AgImprovementType, assignAgImprovements } from './AgImprovements';
@@ -22,6 +22,9 @@ import { assignMines } from './MineAssignment';
 import { assignSmelters } from './SmelterAssignment';
 import { buildAdjacencyList } from '../utils/adjacency';
 import { RIVER_THRESHOLD } from '../generators/utils';
+import type { StructureInstance } from '../generators/StructureRenderer';
+import { getProductionHut, pickCottageTemplate } from '../generators/HouseStyles';
+import { mulberry32 } from '../generators/TopographyGenerator';
 
 export interface GameState {
   seed: number;
@@ -67,6 +70,8 @@ export interface GameState {
   playerFishingCamps: FishingCampState[];
   playerMines: MineState[];
   playerSmelters: SmelterState[];
+  // Non-specialized buildings rendered as house-style structures
+  playerStructures: StructureInstance[];
 
   // Tree trunk positions permanently removed by woodcutters (pixel indices: y * N + x)
   removedTrees: Set<number>;
@@ -123,6 +128,7 @@ export function createGameState(seed: number, mapSize: number, playerHouse: numb
     playerFishingCamps: [],
     playerMines: [],
     playerSmelters: [],
+    playerStructures: [],
     removedTrees: new Set(),
   };
 }
@@ -190,6 +196,14 @@ export function loadGameState(save: SaveData): GameState {
     rebuildSmelterState(topo, hydro, adj, scale, ps.regionIndex as number, ps.duchyIndex as number, ps.ingotCount as number),
   );
 
+  // Rebuild player structures for non-specialized completed buildings
+  const playerStructures: StructureInstance[] = [];
+  for (const b of (save.buildings ?? [])) {
+    if (!b.constructing && !SPECIALIZED_BUILDING_TYPES.has(b.type)) {
+      playerStructures.push(buildStructureInstance(topo, scale, b.region, b.duchyIndex, save.seed));
+    }
+  }
+
   return {
     seed: save.seed,
     mapSize: save.mapSize,
@@ -216,6 +230,7 @@ export function loadGameState(save: SaveData): GameState {
     playerFishingCamps,
     playerMines,
     playerSmelters,
+    playerStructures,
     removedTrees: new Set(save.removedTrees ?? []),
   };
 }
@@ -236,7 +251,16 @@ export function advanceTurn(state: GameState): void {
     const terrain = countTerrain(
       duchy.regions, terrainTypes, duchy.hasRiver, duchy.hasForest,
     );
-    state.economies[i] = processEconomyTurn(state.economies[i], terrain, duchy.house);
+    const cap: ProcessingCapacity = { smokehouse: 0, kitchen: 0, dairy: 0, bakery: 0 };
+    for (const b of state.buildings) {
+      if (b.duchyIndex === i && !b.constructing) {
+        if (b.type === 'smokehouse') cap.smokehouse++;
+        else if (b.type === 'kitchen') cap.kitchen++;
+        else if (b.type === 'dairy') cap.dairy++;
+        else if (b.type === 'bakery') cap.bakery++;
+      }
+    }
+    state.economies[i] = processEconomyTurn(state.economies[i], terrain, duchy.house, cap);
 
     // Woodcutter timber production
     const wc = state.woodcutters.get(i);
@@ -408,6 +432,12 @@ function registerCompletedBuilding(state: GameState, b: BuildingInstance): void 
         rebuildSmelterState(state.topo, state.hydro, adj, scale, b.region, b.duchyIndex, 0),
       );
       break;
+    default:
+      // Non-specialized types → render as house-style structure
+      state.playerStructures.push(
+        buildStructureInstance(state.topo, scale, b.region, b.duchyIndex, state.seed),
+      );
+      break;
   }
 }
 
@@ -572,5 +602,29 @@ function rebuildSmelterState(
     buildingPy,
     nearRiver,
     ingotCount,
+  };
+}
+
+function buildStructureInstance(
+  topo: TopographyGenerator,
+  scale: number,
+  region: number,
+  duchyIndex: number,
+  seed: number,
+): StructureInstance {
+  const pt = topo.mesh.points[region];
+  const px = Math.floor(pt.x / scale);
+  const py = Math.floor(pt.y / scale);
+  const rng = mulberry32(seed ^ (region * 0x9E3779B9));
+  const template = rng() < 0.5
+    ? getProductionHut(duchyIndex)
+    : pickCottageTemplate(duchyIndex, rng);
+  return {
+    px,
+    py,
+    template,
+    flipped: rng() < 0.5,
+    isCapital: false,
+    duchyIndex,
   };
 }

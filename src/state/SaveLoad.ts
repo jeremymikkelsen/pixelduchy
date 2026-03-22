@@ -6,7 +6,7 @@
  */
 
 import type { DuchyEconomy } from './Economy';
-import { FOOD_KEYS } from './Economy';
+import { FOOD_KEYS, defaultFoodProcessing } from './Economy';
 import type { Season } from './Season';
 import type { BuildingInstance, WoodcutterState, FishingCampState, MineState, SmelterState } from './Building';
 import type { AgImprovementType } from './AgImprovements';
@@ -122,6 +122,12 @@ export function loadGame(): SaveData | null {
       if (!eco.foodEatOrder) {
         eco.foodEatOrder = [...FOOD_KEYS];
       }
+      if (!eco.foodProcessing) {
+        eco.foodProcessing = defaultFoodProcessing();
+      }
+      if (eco.resources.vegetables === undefined) eco.resources.vegetables = 0;
+      if (eco.resources.meat === undefined) eco.resources.meat = 0;
+      if (eco.resources.milk === undefined) eco.resources.milk = 0;
     }
 
     console.log('[Load] Save found', {

@@ -17,8 +17,8 @@ import {
 
 export type ResourceType =
   | 'timber' | 'ore' | 'stone' | 'iron' | 'cloth' | 'gold'
-  | 'grain' | 'cattle' | 'fish' | 'deer' | 'apples'
-  | 'bread' | 'cheese' | 'smoked_meat' | 'pie';
+  | 'grain' | 'cattle' | 'fish' | 'deer' | 'apples' | 'vegetables'
+  | 'meat' | 'milk' | 'bread' | 'cheese' | 'smoked_meat' | 'pie';
 
 export type RationLevel = 'none' | 'meager' | 'normal' | 'extra';
 export type DevelopmentMode = 'command' | 'incentivize' | 'laissez_faire';
@@ -27,6 +27,7 @@ export interface Resources {
   timber: number; ore: number; stone: number; iron: number;
   cloth: number; gold: number;
   grain: number; cattle: number; fish: number; deer: number; apples: number;
+  vegetables: number; meat: number; milk: number;
   bread: number; cheese: number; smoked_meat: number; pie: number;
 }
 
@@ -44,6 +45,19 @@ export interface LaborAssignment {
   unemployed: number;
 }
 
+export interface FoodProcessing {
+  cattleSlaughter: number;    // 0 to cattle count
+  meatSmokingRatio: number;   // 0-100%
+  dairyCheeseSplit: number;   // 0-100% (0=all milk, 100=all cheese)
+  grainBakingRatio: number;   // 0-100%
+  pieBakingRatio: number;     // 0-100%
+  foodLaborRatio: number;     // 0-100 (stub for now)
+}
+
+export function defaultFoodProcessing(): FoodProcessing {
+  return { cattleSlaughter: 0, meatSmokingRatio: 0, dairyCheeseSplit: 50, grainBakingRatio: 0, pieBakingRatio: 0, foodLaborRatio: 50 };
+}
+
 export interface FoodLedger {
   produced: number;
   eaten: number;
@@ -58,6 +72,7 @@ export interface DuchyEconomy {
   developmentMode: DevelopmentMode;
   foodLedger: FoodLedger;
   foodEatOrder: ResourceType[];
+  foodProcessing: FoodProcessing;
   taxRate: number;         // 0–100
   kingsFavor: number;      // 0–100
   militaryStrength: number;
@@ -73,9 +88,9 @@ export const HAPPINESS_FROM_RATIONS: Record<RationLevel, number> = {
   none: -10, meager: -5, normal: 0, extra: 3,
 };
 
-export const FOOD_KEYS: ResourceType[] = [
-  'grain', 'bread', 'cattle', 'smoked_meat', 'fish', 'cheese', 'apples', 'pie', 'deer',
-];
+export const RAW_FOOD_KEYS: ResourceType[] = ['grain', 'cattle', 'fish', 'deer', 'apples', 'vegetables'];
+export const PROCESSED_FOOD_KEYS: ResourceType[] = ['meat', 'milk', 'bread', 'cheese', 'smoked_meat', 'pie'];
+export const FOOD_KEYS: ResourceType[] = [...RAW_FOOD_KEYS, ...PROCESSED_FOOD_KEYS];
 
 const RESOURCE_KEYS: ResourceType[] = ['timber', 'ore', 'stone', 'iron', 'cloth'];
 
@@ -83,6 +98,7 @@ export function emptyResources(): Resources {
   return {
     timber: 0, ore: 0, stone: 0, iron: 0, cloth: 0, gold: 0,
     grain: 0, cattle: 0, fish: 0, deer: 0, apples: 0,
+    vegetables: 0, meat: 0, milk: 0,
     bread: 0, cheese: 0, smoked_meat: 0, pie: 0,
   };
 }
@@ -92,6 +108,7 @@ export function starterResources(): Resources {
     grain: 20, timber: 15, ore: 8, stone: 0, iron: 0,
     cloth: 5, fish: 5, gold: 10,
     cattle: 0, deer: 0, apples: 0,
+    vegetables: 0, meat: 0, milk: 0,
     bread: 0, cheese: 0, smoked_meat: 0, pie: 0,
   };
 }
@@ -113,6 +130,7 @@ export function createDuchyEconomy(startingFavor: number = 50): DuchyEconomy {
     developmentMode: 'laissez_faire',
     foodLedger: { produced: 0, eaten: 0, spoiled: 0 },
     foodEatOrder: [...FOOD_KEYS],
+    foodProcessing: defaultFoodProcessing(),
     taxRate: 20,
     kingsFavor: startingFavor,
     militaryStrength: 10,
@@ -167,12 +185,74 @@ export function computeProduction(terrain: TerrainCounts, labor: LaborAssignment
   return prod;
 }
 
+// ─── Processing capacity ─────────────────────────────────────────────────────
+
+export interface ProcessingCapacity {
+  smokehouse: number;
+  kitchen: number;
+  dairy: number;
+  bakery: number;
+}
+
+export function processFoodPipeline(
+  eco: DuchyEconomy,
+  capacity: ProcessingCapacity,
+  production: Partial<Record<ResourceType, number>>,
+): void {
+  const fp = eco.foodProcessing;
+  const r = eco.resources;
+
+  // 1. Cattle slaughter → meat
+  const toSlaughter = Math.min(fp.cattleSlaughter, r.cattle);
+  r.cattle -= toSlaughter;
+  r.meat += toSlaughter;
+
+  // 2. Fish/deer new production → meat
+  const newFish = production.fish ?? 0;
+  const newDeer = production.deer ?? 0;
+  const fishToMeat = Math.min(newFish, r.fish);
+  const deerToMeat = Math.min(newDeer, r.deer);
+  r.fish -= fishToMeat;
+  r.deer -= deerToMeat;
+  r.meat += fishToMeat + deerToMeat;
+
+  // 3. Meat smoking (capped by smokehouse capacity)
+  const smokeCap = capacity.smokehouse * 2;
+  const toSmoke = Math.min(Math.floor(r.meat * fp.meatSmokingRatio / 100), smokeCap);
+  r.meat -= toSmoke;
+  r.smoked_meat += toSmoke;
+
+  // 4. Dairy: 50% of non-slaughtered cattle production → milk/cheese
+  const nonSlaughteredProd = Math.max(0, (production.cattle ?? 0) - toSlaughter);
+  const dairyUnits = Math.floor(nonSlaughteredProd * 0.5);
+  const cheeseCap = capacity.dairy * 2;
+  const cheeseUnits = Math.min(Math.floor(dairyUnits * fp.dairyCheeseSplit / 100), cheeseCap);
+  const milkUnits = dairyUnits - cheeseUnits;
+  r.milk += milkUnits;
+  r.cheese += cheeseUnits;
+
+  // 5. Pie: apples + grain → pie (requires Bakery, computed before bread)
+  const pieCap = capacity.bakery * 2;
+  const piePotential = Math.min(r.apples, r.grain);
+  const pieToBake = Math.min(Math.floor(piePotential * fp.pieBakingRatio / 100), pieCap);
+  r.apples -= pieToBake;
+  r.grain -= pieToBake;
+  r.pie += pieToBake * 2;
+
+  // 6. Bread: grain → bread at 1:2 ratio (requires Kitchen or Bakery)
+  const breadCap = (capacity.kitchen + capacity.bakery) * 2;
+  const grainToBake = Math.min(Math.floor(r.grain * fp.grainBakingRatio / 100), breadCap, r.grain);
+  r.grain -= grainToBake;
+  r.bread += grainToBake * 2;
+}
+
 // ─── Turn processing ─────────────────────────────────────────────────────────
 
 export function processEconomyTurn(
   economy: DuchyEconomy,
   terrain: TerrainCounts,
   house: HouseData | null = null,
+  capacity?: ProcessingCapacity,
 ): DuchyEconomy {
   const eco = structuredClone(economy);
 
@@ -184,6 +264,11 @@ export function processEconomyTurn(
     const adjusted = Math.floor((amount ?? 0) * mod);
     eco.resources[key as ResourceType] += adjusted;
     if (FOOD_KEYS.includes(key as ResourceType)) totalProduced += adjusted;
+  }
+
+  // 1b. Food processing pipeline
+  if (capacity) {
+    processFoodPipeline(eco, capacity, production);
   }
 
   // 2. Tax income
@@ -339,8 +424,8 @@ export function processBuilding(
 // ─── Dynamic market pricing ─────────────────────────────────────────────────
 
 export const BASE_MARKET_PRICES: Partial<Record<ResourceType, number>> = {
-  grain: 2, cattle: 4, fish: 3, apples: 2, timber: 3, ore: 5,
-  stone: 4, iron: 8, cloth: 6, bread: 3, cheese: 5, smoked_meat: 6,
+  grain: 2, cattle: 4, fish: 3, apples: 2, vegetables: 2, timber: 3, ore: 5,
+  stone: 4, iron: 8, cloth: 6, meat: 3, milk: 2, bread: 3, cheese: 5, smoked_meat: 6,
   pie: 7, deer: 4, gold: 1,
 };
 

@@ -203,7 +203,7 @@ function getOrchardPalette(season: Season, _seed: number): OrchardPalette {
     case Season.Winter:
       return {
         canopy: [0x2a2018, 0x3a2c20, 0x483828, 0x584830, 0x685838],
-        trunk: [0x3a2c20, 0x281c14],
+        trunk: [0x5a4a38, 0x3a2c20],
       };
   }
 }
@@ -742,30 +742,34 @@ export class FarmRenderer {
 
       const palette = getOrchardPalette(season, seed);
 
-      // Shadow pass
-      for (const tree of trees) {
-        const tmpl = ORCHARD_TEMPLATES[tree.templateIdx];
-        const sw = Math.ceil(tmpl.w * 0.7);
-        const sh = Math.max(1, Math.ceil(tmpl.h * 0.25));
-        const sx = tree.tx + 1 - Math.floor(sw / 2);
-        const sy = tree.ty;
-        for (let dy = 0; dy < sh; dy++) {
-          for (let dx = 0; dx < sw; dx++) {
-            const px = sx + dx;
-            const py = sy + dy;
-            if (px < 0 || px >= N || py < 0 || py >= N) continue;
-            const ex = (dx - sw / 2) / (sw / 2);
-            const ey = (dy - sh / 2) / (sh / 2);
-            if (ex * ex + ey * ey > 1.0) continue;
-            const idx = py * N + px;
-            pixels[idx] = _darkenPixel(pixels[idx], 0.55);
+      // Shadow pass (skip winter — bare branches don't cast much shadow)
+      if (season !== Season.Winter) {
+        for (const tree of trees) {
+          const tmpl = ORCHARD_TEMPLATES[tree.templateIdx];
+          const sw = Math.ceil(tmpl.w * 0.7);
+          const sh = Math.max(1, Math.ceil(tmpl.h * 0.25));
+          const sx = tree.tx + 1 - Math.floor(sw / 2);
+          const sy = tree.ty;
+          for (let dy = 0; dy < sh; dy++) {
+            for (let dx = 0; dx < sw; dx++) {
+              const px = sx + dx;
+              const py = sy + dy;
+              if (px < 0 || px >= N || py < 0 || py >= N) continue;
+              const ex = (dx - sw / 2) / (sw / 2);
+              const ey = (dy - sh / 2) / (sh / 2);
+              if (ex * ex + ey * ey > 1.0) continue;
+              const idx = py * N + px;
+              pixels[idx] = _darkenPixel(pixels[idx], 0.55);
+            }
           }
         }
       }
 
-      // Sprite pass — always use leafed templates, winter palette handles the muted look
+      // Sprite pass — bare branches in winter, leafed canopies other seasons
       for (const tree of trees) {
-        const tmpl = ORCHARD_TEMPLATES[tree.templateIdx];
+        const tmpl = season === Season.Winter
+          ? ORCHARD_BARE_TEMPLATES[tree.templateIdx % ORCHARD_BARE_TEMPLATES.length]
+          : ORCHARD_TEMPLATES[tree.templateIdx];
         this._stampOrchardTree(pixels, N, tree.tx, tree.ty, tmpl, palette, tree.flipped, season, seed);
       }
     }

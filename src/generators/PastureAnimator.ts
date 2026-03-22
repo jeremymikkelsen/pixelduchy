@@ -199,11 +199,12 @@ export class PastureAnimator {
         const facingRight = cow.mirrorBase ? vx > 0 : vx <= 0;
         const sprite = facingRight ? COW_RIGHT : COW_LEFT;
 
-        // Check if the cow's center pixel is inside the pasture region —
-        // if so, draw the entire sprite (no per-pixel clipping, which causes
-        // cows to show as 2-pixel fragments at Voronoi boundary edges)
-        const centerSrcIdx = (sy + 1) * N + (sx + 2);
-        if (!pasture.validPixels.has(centerSrcIdx)) continue;
+        // Check all 4 corners of the cow sprite are inside the pasture —
+        // this keeps cows fully within the fence line (not just the region boundary)
+        if (!pasture.validPixels.has(sy * N + sx) ||
+            !pasture.validPixels.has(sy * N + sx + COW_W - 1) ||
+            !pasture.validPixels.has((sy + COW_H - 1) * N + sx) ||
+            !pasture.validPixels.has((sy + COW_H - 1) * N + sx + COW_W - 1)) continue;
 
         for (let row = 0; row < COW_H; row++) {
           for (let col = 0; col < COW_W; col++) {
